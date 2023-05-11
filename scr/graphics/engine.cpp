@@ -23,21 +23,24 @@ namespace cw::graphics {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-        m_Window = glfwCreateWindow(static_cast<int>(m_WindowExtent.width), static_cast<int>(m_WindowExtent.height), "clockwork engine", nullptr, nullptr);
+        m_Window = glfwCreateWindow(static_cast<int>(m_WindowExtent.width), static_cast<int>(m_WindowExtent.height),
+                                    "clockwork engine", nullptr, nullptr);
 
         initVulkan();
         initSwapchain();
-        initVulkan();
+        initCommands();
 
         m_IsInit = true;
     }
 
     void Engine::cleanup() {
-        if(m_IsInit){
+        if (m_IsInit) {
+            vkDestroyCommandPool(m_Device, m_CommandPool, nullptr);
+
             vkDestroySwapchainKHR(m_Device, m_Swapchain, nullptr);
 
             //destroy swapchain resources
-            for (auto & m_SwapchainImageView : m_SwapchainImageViews) {
+            for (auto &m_SwapchainImageView: m_SwapchainImageViews) {
                 vkDestroyImageView(m_Device, m_SwapchainImageView, nullptr);
             }
 
@@ -52,7 +55,7 @@ namespace cw::graphics {
     }
 
     void Engine::run() {
-        while(!glfwWindowShouldClose(m_Window)){
+        while (!glfwWindowShouldClose(m_Window)) {
             glfwPollEvents();
             draw();
         }
@@ -85,7 +88,7 @@ namespace cw::graphics {
 
         //use vkbootstrap to select a GPU.
         //We want a GPU that can write to the GLFW surface and supports Vulkan 1.1
-        vkb::PhysicalDeviceSelector selector{ vkbInst };
+        vkb::PhysicalDeviceSelector selector{vkbInst};
         vkb::PhysicalDevice physicalDevice = selector
                 .set_minimum_version(1, 1)
                 .set_surface(m_Surface)
@@ -93,7 +96,7 @@ namespace cw::graphics {
                 .value();
 
         //create the final Vulkan device
-        vkb::DeviceBuilder deviceBuilder{ physicalDevice };
+        vkb::DeviceBuilder deviceBuilder{physicalDevice};
 
         vkb::Device vkbDevice = deviceBuilder.build().value();
 
@@ -107,7 +110,7 @@ namespace cw::graphics {
     }
 
     void Engine::initSwapchain() {
-        vkb::SwapchainBuilder swapchainBuilder{m_ChosenGpu,m_Device,m_Surface };
+        vkb::SwapchainBuilder swapchainBuilder{m_ChosenGpu, m_Device, m_Surface};
 
         vkb::Swapchain vkbSwapchain = swapchainBuilder
                 .use_default_format_selection()
@@ -130,10 +133,11 @@ namespace cw::graphics {
         //we also want the pool to allow for resetting of individual command buffers
         VkCommandPoolCreateInfo commandPoolInfo = init::commandPoolCreateInfo(m_GraphicsQueueFamily, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
-        VK_CHECK(vkCreateCommandPool(m_Device, &commandPoolInfo, nullptr, &m_CzommandPool));
+        VK_CHECK(vkCreateCommandPool(m_Device, &commandPoolInfo, nullptr, &m_CommandPool));
 
         //allocate the default command buffer that we will use for rendering
         VkCommandBufferAllocateInfo cmdAllocInfo = init::commandBufferAllocateInfo(m_CommandPool, 1);
 
-        VK_CHECK(vkAllocateCommandBuffers(m_Device, &cmdAllocInfo, &m_MainCommandBuffer));    }
+        VK_CHECK(vkAllocateCommandBuffers(m_Device, &cmdAllocInfo, &m_MainCommandBuffer));
+    }
 }
