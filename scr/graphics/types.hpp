@@ -1,0 +1,7 @@
+#ifndef CLOCKWORK_TYPES_HPP
+#define CLOCKWORK_TYPES_HPP
+
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
+#endif //CLOCKWORK_TYPES_HPP

@@ -1,0 +1,9 @@
+[submodule "lib/vulkan"]
+	path = lib/vulkan
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+[submodule "lib/glfw"]
+	path = lib/glfw
+	url = https://github.com/glfw/glfw.git
+[submodule "lib/vk-bootstrap"]
+	path = lib/vk-bootstrap
+	url = https://github.com/charles-lunarg/vk-bootstrap

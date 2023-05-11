@@ -1,0 +1,8 @@
+#ifndef CLOCKWORK_INITIALIZERS_HPP
+#define CLOCKWORK_INITIALIZERS_HPP
+
+namespace cw::graphics::init {
+
+}
+
+#endif //CLOCKWORK_INITIALIZERS_HPP
