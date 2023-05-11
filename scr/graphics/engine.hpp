@@ -30,12 +30,15 @@ namespace cw::graphics {
         VkDevice m_Device{}; // vulkan device for commands
         VkSurfaceKHR m_Surface{};
 
-        VkQueue m_GraphicsQueue{};
-        uint32_t m_GraphicsQueueFamily{};
-        
+        VkQueue m_GraphicsQueue; //queue we will submit to
+        uint32_t m_GraphicsQueueFamily; //family of that queue
+
+        VkCommandPool m_CommandPool; //the command pool for our commands
+        VkCommandBuffer m_MainCommandBuffer; //the buffer we will record into
     private:
         void initVulkan();
         void initSwapchain();
+        void initCommands();
 
         bool m_IsInit {false};
         int m_FrameNumber {0};

@@ -1,6 +1,9 @@
 #include "engine.hpp"
+#include "initializers.hpp"
+
 #include <iostream>
 #include <VkBootstrap.h>
+
 
 //we want to immediately abort when there is an error. In normal engines this would give an error message to the user, or perform a dump of state.
 #define VK_CHECK(x)                                                    \
@@ -24,6 +27,7 @@ namespace cw::graphics {
 
         initVulkan();
         initSwapchain();
+        initVulkan();
 
         m_IsInit = true;
     }
@@ -96,6 +100,10 @@ namespace cw::graphics {
         // Get the VkDevice handle used in the rest of a Vulkan application
         m_Device = vkbDevice.device;
         m_ChosenGpu = physicalDevice.physical_device;
+
+        // use vkbootstrap to get a Graphics queue
+        m_GraphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
+        m_GraphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
     }
 
     void Engine::initSwapchain() {
@@ -116,4 +124,16 @@ namespace cw::graphics {
 
         m_SwapchainImageFormat = vkbSwapchain.image_format;
     }
+
+    void Engine::initCommands() {
+        //create a command pool for commands submitted to the graphics queue.
+        //we also want the pool to allow for resetting of individual command buffers
+        VkCommandPoolCreateInfo commandPoolInfo = init::commandPoolCreateInfo(m_GraphicsQueueFamily, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+
+        VK_CHECK(vkCreateCommandPool(m_Device, &commandPoolInfo, nullptr, &m_CzommandPool));
+
+        //allocate the default command buffer that we will use for rendering
+        VkCommandBufferAllocateInfo cmdAllocInfo = init::commandBufferAllocateInfo(m_CommandPool, 1);
+
+        VK_CHECK(vkAllocateCommandBuffers(m_Device, &cmdAllocInfo, &m_MainCommandBuffer));    }
 }
