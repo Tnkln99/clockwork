@@ -1,10 +1,31 @@
 #ifndef CLOCKWORK_ENGINE_HPP
 #define CLOCKWORK_ENGINE_HPP
 
-#include "types.hpp"
+#include "pipeline.hpp"
+
 #include <vector>
+#include <deque>
+#include <functional>
 
 namespace cw::graphics {
+    struct DeletionQueue
+    {
+        std::deque<std::function<void()>> deletors;
+
+        void push_function(std::function<void()>&& function) {
+            deletors.push_back(function);
+        }
+
+        void flush() {
+            // reverse iterate the deletion queue to execute all the functions
+            for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
+                (*it)(); //call the function
+            }
+
+            deletors.clear();
+        }
+    };
+
 
     class Engine {
     public:
@@ -15,38 +36,59 @@ namespace cw::graphics {
 
         void cleanup();
 
-        VkSwapchainKHR m_Swapchain{}; // from other articles
+        VmaAllocator mAllocator; //vma lib allocator
+
+        VkSwapchainKHR mSwapchain{}; // from other articles
         // image format expected by the windowing system
-        VkFormat m_SwapchainImageFormat{};
-        //array of images from the swapchain
-        std::vector<VkImage> m_SwapchainImages{};
-        //array of image-views from the swapchain
-        std::vector<VkImageView> m_SwapchainImageViews{};
+        VkFormat mSwapchainImageFormat{};
+        // array of images from the swapchain
+        std::vector<VkImage> mSwapchainImages{};
+        // array of image-views from the swapchain
+        std::vector<VkImageView> mSwapchainImageViews{};
 
 
-        VkInstance m_Instance{};
-        VkDebugUtilsMessengerEXT m_DebugMessenger{};
-        VkPhysicalDevice m_ChosenGpu{};
-        VkDevice m_Device{}; // vulkan device for commands
-        VkSurfaceKHR m_Surface{};
+        VkInstance mInstance{};
+        VkDebugUtilsMessengerEXT mDebugMessenger{};
+        VkPhysicalDevice mChosenGpu{};
+        VkDevice mDevice{}; // vulkan device for commands
+        VkSurfaceKHR mSurface{};
 
-        VkQueue m_GraphicsQueue; //queue we will submit to
-        uint32_t m_GraphicsQueueFamily; //family of that queue
+        VkQueue mGraphicsQueue{}; //queue we will submit to
+        uint32_t mGraphicsQueueFamily; //family of that queue
 
-        VkCommandPool m_CommandPool; //the command pool for our commands
-        VkCommandBuffer m_MainCommandBuffer; //the buffer we will record into
+        VkCommandPool mCommandPool; //the command pool for our commands
+        VkCommandBuffer mMainCommandBuffer; //the buffer we will record into
+
+        VkRenderPass mRenderpass;
+        std::vector<VkFramebuffer> mFramebuffers;
+
+        VkSemaphore mPresentSemaphore, mRenderSemaphore;
+        VkFence mRenderFence;
+
+        VkPipelineLayout mTrianglePipelineLayout;
+        VkPipeline mTrianglePipeline;
+        VkPipeline mRedTrianglePipeline;
+
+        DeletionQueue mMainDeletionQueue;
     private:
+        void initWindow();
         void initVulkan();
         void initSwapchain();
         void initCommands();
+        void initDefaultRenderpass();
+        void initFramebuffers();
+        void initSyncStructure();
+        void initPipelines();
 
-        bool m_IsInit {false};
-        int m_FrameNumber {0};
+        //loads a shader module from a spir-v file. Returns false if it errors
+        bool loadShaderModule(const char* filePath, VkShaderModule* outShaderModule) const;
 
-        VkExtent2D m_WindowExtent {800, 600};
-        GLFWwindow* m_Window{ nullptr };
+        bool mIsInit {false};
+        int mFrameNumber {0};
+
+        VkExtent2D mWindowExtent {800, 600};
+        GLFWwindow* mWindow{ nullptr };
     };
-
 }
 
 #endif //CLOCKWORK_ENGINE_HPP
