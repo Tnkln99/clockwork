@@ -2,12 +2,19 @@
 #define CLOCKWORK_ENGINE_HPP
 
 #include "pipeline.hpp"
+#include "mesh.hpp"
 
 #include <vector>
 #include <deque>
 #include <functional>
+#include <glm/glm.hpp>
 
 namespace cw::graphics {
+    struct MeshPushConstants {
+        glm::vec4 mData;
+        glm::mat4 mRenderMatrix;
+    };
+
     struct DeletionQueue
     {
         std::deque<std::function<void()>> deletors;
@@ -69,6 +76,11 @@ namespace cw::graphics {
         VkPipeline mTrianglePipeline;
         VkPipeline mRedTrianglePipeline;
 
+        VkPipelineLayout mMeshPipelineLayout;
+        VkPipeline mMeshPipeline;
+
+        Mesh mTriangleMesh;
+
         DeletionQueue mMainDeletionQueue;
     private:
         void initWindow();
@@ -79,6 +91,9 @@ namespace cw::graphics {
         void initFramebuffers();
         void initSyncStructure();
         void initPipelines();
+
+        void loadMeshes();
+        void uploadMesh(Mesh & mesh);
 
         //loads a shader module from a spir-v file. Returns false if it errors
         bool loadShaderModule(const char* filePath, VkShaderModule* outShaderModule) const;

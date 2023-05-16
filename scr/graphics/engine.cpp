@@ -8,6 +8,7 @@
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 
+#include <glm/gtx/transform.hpp>
 
 //we want to immediately abort when there is an error. In normal engines this would give an error message to the user, or perform a dump of state.
 #define VK_CHECK(x)                                                    \
@@ -30,8 +31,9 @@ namespace cw::graphics {
         initDefaultRenderpass();
         initFramebuffers();
         initSyncStructure();
-
         initPipelines();
+
+        loadMeshes();
 
         mIsInit = true;
     }
@@ -43,6 +45,7 @@ namespace cw::graphics {
 
             mMainDeletionQueue.flush();
 
+            vmaDestroyAllocator(mAllocator);
             vkDestroyDevice(mDevice, nullptr);
             vkDestroySurfaceKHR(mInstance, mSurface, nullptr);
             vkb::destroy_debug_utils_messenger(mInstance, mDebugMessenger);
@@ -108,14 +111,34 @@ namespace cw::graphics {
 
         vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        //once we start adding rendering commands, they will go here
-        if(glfwGetKey(mWindow, GLFW_KEY_Y)){
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mRedTrianglePipeline);
-        }
-        else{
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mTrianglePipeline);
-        }
-        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMeshPipeline);
+
+        //bind the mesh vertex buffer with offset 0
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &mTriangleMesh.mVertexBuffer.mBuffer, &offset);
+
+        //make a model view matrix for rendering the object
+        //camera position
+        glm::vec3 camPos = { 0.f,0.f,-2.f };
+
+        glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);
+        //camera projection
+        glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
+        projection[1][1] *= -1;
+        //model rotation
+        glm::mat4 model = glm::rotate(glm::mat4{ 1.0f }, glm::radians(mFrameNumber * 0.4f), glm::vec3(0, 1, 0));
+
+        //calculate final mesh matrix
+        glm::mat4 meshMatrix = projection * view * model;
+
+        MeshPushConstants constants{};
+        constants.mRenderMatrix = meshMatrix;
+
+        //upload the matrix to the GPU via push constants
+        vkCmdPushConstants(cmd, mMeshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
+
+        //we can now draw the mesh
+        vkCmdDraw(cmd, mTriangleMesh.mVertices.size(), 1, 0, 0);
 
         //finalize the render pass
         vkCmdEndRenderPass(cmd);
@@ -467,20 +490,128 @@ namespace cw::graphics {
         //build the red triangle pipeline
         mRedTrianglePipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
 
+        //build the mesh pipeline
+        VertexInputDescription vertexDescription = Vertex::getVertexDescription();
+
+        //connect the pipeline builder vertex input info to the one we get from Vertex
+        pipelineBuilder.mVertexInputInfo.pVertexAttributeDescriptions = vertexDescription.mAttributes.data();
+        pipelineBuilder.mVertexInputInfo.vertexAttributeDescriptionCount = vertexDescription.mAttributes.size();
+
+        pipelineBuilder.mVertexInputInfo.pVertexBindingDescriptions = vertexDescription.mBindings.data();
+        pipelineBuilder.mVertexInputInfo.vertexBindingDescriptionCount = vertexDescription.mBindings.size();
+
+        //clear the shader stages for the builder
+        pipelineBuilder.mShaderStages.clear();
+
+        //compile mesh vertex shader
+        VkShaderModule meshVertShader;
+        if (!loadShaderModule("res/shaders/tri_mesh.vert.spv", &meshVertShader))
+        {
+            std::cout << "Error when building the triangle vertex shader module" << std::endl;
+        }
+        else {
+            std::cout << "Mesh Triangle vertex shader successfully loaded" << std::endl;
+        }
+
+        //add the other shaders
+        pipelineBuilder.mShaderStages.push_back(
+                init::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, meshVertShader));
+
+        //make sure that triangleFragShader is holding the compiled colored_triangle.frag
+        pipelineBuilder.mShaderStages.push_back(
+                init::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, triangleFragShader));
+
+        //we start from just the default empty pipeline layout info
+        VkPipelineLayoutCreateInfo meshPipelineLayoutInfo = init::pipelineLayoutCreateInfo();
+
+        //setup push constants
+        VkPushConstantRange pushConstant;
+        //this push constant range starts at the beginning
+        pushConstant.offset = 0;
+        //this push constant range takes up the size of a MeshPushConstants struct
+        pushConstant.size = sizeof(MeshPushConstants);
+        //this push constant range is accessible only in the vertex shader
+        pushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        meshPipelineLayoutInfo.pPushConstantRanges = &pushConstant;
+        meshPipelineLayoutInfo.pushConstantRangeCount = 1;
+
+        VK_CHECK(vkCreatePipelineLayout(mDevice, &meshPipelineLayoutInfo, nullptr, &mMeshPipelineLayout));
+
+        pipelineBuilder.mPipelineLayout = mMeshPipelineLayout;
+        mMeshPipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
+
         //destroy all shader modules, outside the queue
+        vkDestroyShaderModule(mDevice, meshVertShader, nullptr);
         vkDestroyShaderModule(mDevice, redTriangleVertShader, nullptr);
         vkDestroyShaderModule(mDevice, redTriangleFragShader, nullptr);
         vkDestroyShaderModule(mDevice, triangleFragShader, nullptr);
         vkDestroyShaderModule(mDevice, triangleVertexShader, nullptr);
 
         mMainDeletionQueue.push_function([=]() {
-            //destroy the 2 pipelines we have created
+            //destroy the 3 pipelines we have created
             vkDestroyPipeline(mDevice, mRedTrianglePipeline, nullptr);
             vkDestroyPipeline(mDevice, mTrianglePipeline, nullptr);
+            vkDestroyPipeline(mDevice, mMeshPipeline, nullptr);
 
             //destroy the pipeline layout that they use
             vkDestroyPipelineLayout(mDevice, mTrianglePipelineLayout, nullptr);
+            vkDestroyPipelineLayout(mDevice, mMeshPipelineLayout, nullptr);
         });
+    }
+
+
+    void Engine::loadMeshes() {
+        //make the array 3 vertices long
+        mTriangleMesh.mVertices.resize(3);
+
+        //vertex positions
+        mTriangleMesh.mVertices[0].position = { 1.f, 1.f, 0.0f };
+        mTriangleMesh.mVertices[1].position = {-1.f, 1.f, 0.0f };
+        mTriangleMesh.mVertices[2].position = { 0.f,-1.f, 0.0f };
+
+        //vertex colors all green
+        mTriangleMesh.mVertices[0].color = { 0.f, 1.f, 0.0f }; //pure green
+        mTriangleMesh.mVertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
+        mTriangleMesh.mVertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
+
+        //we don't care about the vertex normals
+
+        uploadMesh(mTriangleMesh);
+    }
+
+    void Engine::uploadMesh(Mesh &mesh) {
+        //allocate vertex buffer
+        VkBufferCreateInfo bufferInfo = {};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        //this is the total size, in bytes, of the buffer we are allocating
+        bufferInfo.size = mesh.mVertices.size() * sizeof(Vertex);
+        //this buffer is going to be used as a Vertex Buffer
+        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+
+
+        //let the VMA library know that this data should be writeable by CPU, but also readable by GPU
+        VmaAllocationCreateInfo vmaAllocInfo = {};
+        vmaAllocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+
+        //allocate the buffer
+        VK_CHECK(vmaCreateBuffer(mAllocator, &bufferInfo, &vmaAllocInfo,
+                                 &mesh.mVertexBuffer.mBuffer,
+                                 &mesh.mVertexBuffer.mAllocation,
+                                 nullptr));
+
+        //add the destruction of triangle mesh buffer to the deletion queue
+        mMainDeletionQueue.push_function([=]() {
+            vmaDestroyBuffer(mAllocator, mesh.mVertexBuffer.mBuffer, mesh.mVertexBuffer.mAllocation);
+        });
+
+        //copy vertex data
+        void* data;
+        vmaMapMemory(mAllocator, mesh.mVertexBuffer.mAllocation, &data);
+
+        memcpy(data, mesh.mVertices.data(), mesh.mVertices.size() * sizeof(Vertex));
+
+        vmaUnmapMemory(mAllocator, mesh.mVertexBuffer.mAllocation);
     }
 
     bool Engine::loadShaderModule(const char *filePath, VkShaderModule *outShaderModule) const {
