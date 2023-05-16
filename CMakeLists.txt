@@ -17,9 +17,23 @@ if(GIT_FOUND)
 
     message(STATUS "Retrieving git submodules...")
 
-    set(SUBMODULES lib/vulkan;lib/glfw;lib/vk-bootstrap;lib/vma;lib/glm)
-    set(REPOSITORIES https://github.com/KhronosGroup/Vulkan-Headers.git;https://github.com/glfw/glfw.git;https://github.com/charles-lunarg/vk-bootstrap;https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git;https://github.com/g-truc/glm.git)
-    set(RELEASES main;3.2.1;master;master;master;)
+    set(SUBMODULES lib/vulkan;
+            lib/glfw;
+            lib/vk-bootstrap;
+            lib/vma;
+            lib/glm;
+            lib/tiny_obj_loader)
+    set(REPOSITORIES https://github.com/KhronosGroup/Vulkan-Headers.git;
+            https://github.com/glfw/glfw.git;https://github.com/charles-lunarg/vk-bootstrap;
+            https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git;
+            https://github.com/g-truc/glm.git;
+            https://github.com/tinyobjloader/tinyobjloader.git)
+    set(RELEASES main;
+            3.2.1;
+            master;
+            master;
+            master;
+            release;)
 
     foreach(UPD_SUB IN LISTS SUBMODULES)
         execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive --remote -- ${UPD_SUB} WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} RESULT_VARIABLE GIT_SUBMOD_RESULT)
@@ -54,6 +68,7 @@ include_directories(lib/vulkan/include)
 add_subdirectory(lib/vk-bootstrap)
 include_directories(lib/vma/include)
 include_directories(lib/glm)
+include_directories(lib/tiny_obj_loader)
 
 find_package(Vulkan REQUIRED)
 

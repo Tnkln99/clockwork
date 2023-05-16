@@ -13,3 +13,6 @@
 [submodule "lib/glm"]
 	path = lib/glm
 	url = https://github.com/g-truc/glm.git
+[submodule "lib/tiny_obj_loader"]
+	path = lib/tiny_obj_loader
+	url = https://github.com/tinyobjloader/tinyobjloader.git
