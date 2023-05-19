@@ -4,7 +4,7 @@
     <mapping directory="" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/lib/glfw" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/lib/glm" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/lib/tiny_obj_loader" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/lib/tinyobjloader" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/lib/vk-bootstrap" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/lib/vma" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/lib/vulkan" vcs="Git" />

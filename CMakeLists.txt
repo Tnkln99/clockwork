@@ -22,7 +22,7 @@ if(GIT_FOUND)
             lib/vk-bootstrap;
             lib/vma;
             lib/glm;
-            lib/tiny_obj_loader)
+            lib/tinyobjloader)
     set(REPOSITORIES https://github.com/KhronosGroup/Vulkan-Headers.git;
             https://github.com/glfw/glfw.git;https://github.com/charles-lunarg/vk-bootstrap;
             https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git;
@@ -63,12 +63,16 @@ endif()
 
 add_subdirectory(lib/glfw)
 include_directories(lib/glfw/include)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 add_subdirectory(lib/vulkan)
 include_directories(lib/vulkan/include)
 add_subdirectory(lib/vk-bootstrap)
 include_directories(lib/vma/include)
 include_directories(lib/glm)
-include_directories(lib/tiny_obj_loader)
+add_subdirectory(lib/tinyobjloader)
+include_directories(lib/tinyobjloader)
 
 find_package(Vulkan REQUIRED)
 
@@ -108,7 +112,7 @@ file(GLOB_RECURSE SRC_FILES "./scr/*.h" "./scr/*.cpp")
 add_executable(clockwork ${SRC_FILES} ${SPIRV_BINARY_FILES})
 
 # Link against all libraries
-target_link_libraries(clockwork ${Vulkan_LIBRARIES} glfw vk-bootstrap::vk-bootstrap)
+target_link_libraries(clockwork ${Vulkan_LIBRARIES} glfw vk-bootstrap::vk-bootstrap tinyobjloader)
 
 # Set the working directory for the executable to the project directory
 set_target_properties(clockwork PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")

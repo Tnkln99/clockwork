@@ -35,6 +35,8 @@ namespace cw::graphics {
 
         loadMeshes();
 
+        initScenes();
+
         mIsInit = true;
     }
 
@@ -93,52 +95,24 @@ namespace cw::graphics {
         float flash = abs(std::sin((float)mFrameNumber / 120.f));
         clearValue.color = { { 0.0f, 0.0f, flash, 1.0f } };
 
+        //clear depth at 1
+        VkClearValue depthClear;
+        depthClear.depthStencil.depth = 1.f;
+
         //start the main renderpass.
         //We will use the clear color from above, and the framebuffer of the index the swapchain gave us
-        VkRenderPassBeginInfo rpInfo = {};
-        rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpInfo.pNext = nullptr;
-
-        rpInfo.renderPass = mRenderpass;
-        rpInfo.renderArea.offset.x = 0;
-        rpInfo.renderArea.offset.y = 0;
-        rpInfo.renderArea.extent = mWindowExtent;
-        rpInfo.framebuffer = mFramebuffers[swapchainImageIndex];
+        VkRenderPassBeginInfo rpInfo = init::renderPassBeginInfo(mRenderpass, mWindowExtent, mFramebuffers[swapchainImageIndex]);
 
         //connect clear values
-        rpInfo.clearValueCount = 1;
-        rpInfo.pClearValues = &clearValue;
+        rpInfo.clearValueCount = 2;
+
+        VkClearValue clearValues[] = { clearValue, depthClear };
+
+        rpInfo.pClearValues = &clearValues[0];
 
         vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMeshPipeline);
-
-        //bind the mesh vertex buffer with offset 0
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &mTriangleMesh.mVertexBuffer.mBuffer, &offset);
-
-        //make a model view matrix for rendering the object
-        //camera position
-        glm::vec3 camPos = { 0.f,0.f,-2.f };
-
-        glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);
-        //camera projection
-        glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
-        projection[1][1] *= -1;
-        //model rotation
-        glm::mat4 model = glm::rotate(glm::mat4{ 1.0f }, glm::radians(mFrameNumber * 0.4f), glm::vec3(0, 1, 0));
-
-        //calculate final mesh matrix
-        glm::mat4 meshMatrix = projection * view * model;
-
-        MeshPushConstants constants{};
-        constants.mRenderMatrix = meshMatrix;
-
-        //upload the matrix to the GPU via push constants
-        vkCmdPushConstants(cmd, mMeshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
-
-        //we can now draw the mesh
-        vkCmdDraw(cmd, mTriangleMesh.mVertices.size(), 1, 0, 0);
+        drawObjects(cmd, mRenderables.data(), mRenderables.size());
 
         //finalize the render pass
         vkCmdEndRenderPass(cmd);
@@ -271,6 +245,38 @@ namespace cw::graphics {
         mMainDeletionQueue.push_function([=]() {
             vkDestroySwapchainKHR(mDevice, mSwapchain, nullptr);
         });
+
+        //depth image size will match the window
+        VkExtent3D depthImageExtent = {
+                mWindowExtent.width,
+                mWindowExtent.height,
+                1
+        };
+
+        //hardcoding the depth format to 32-bit float
+        mDepthFormat = VK_FORMAT_D32_SFLOAT;
+
+        //the depth image will be an image with the format we selected and Depth Attachment usage flag
+        VkImageCreateInfo imgInfo = init::imageCreateInfo(mDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depthImageExtent);
+
+        //for the depth image, we want to allocate it from GPU local memory
+        VmaAllocationCreateInfo imgAllocInfo = {};
+        imgAllocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        imgAllocInfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        //allocate and create the image
+        vmaCreateImage(mAllocator, &imgInfo, &imgAllocInfo, &mDepthImage.mImage, &mDepthImage.mAllocation, nullptr);
+
+        //build an image-view for the depth image to use for rendering
+        VkImageViewCreateInfo dview_info = init::imageViewCreateInfo(mDepthFormat, mDepthImage.mImage, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+        VK_CHECK(vkCreateImageView(mDevice, &dview_info, nullptr, &mDepthImageView));
+
+        //add to deletion queues
+        mMainDeletionQueue.push_function([=]() {
+            vkDestroyImageView(mDevice, mDepthImageView, nullptr);
+            vmaDestroyImage(mAllocator, mDepthImage.mImage, mDepthImage.mAllocation);
+        });
     }
 
     void Engine::initCommands() {
@@ -316,21 +322,67 @@ namespace cw::graphics {
         colorAttachmentRef.attachment = 0;
         colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+        VkAttachmentDescription depthAttachment = {};
+        // Depth attachment
+        depthAttachment.flags = 0;
+        depthAttachment.format = mDepthFormat;
+        depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference depthAttachmentRef = {};
+        depthAttachmentRef.attachment = 1;
+        depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
         //we are going to create 1 subpass, which is the minimum you can do
         VkSubpassDescription subpass = {};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
+        //hook the depth attachment into the subpass
+        subpass.pDepthStencilAttachment = &depthAttachmentRef;
+
+        //1 dependency, which is from "outside" into the subpass. And we can read or write color
+        VkSubpassDependency dependency = {};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.dstSubpass = 0;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcAccessMask = 0;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+        //dependency from outside to the subpass, making this subpass dependent on the previous renderpasses
+        VkSubpassDependency depthDependency = {};
+        depthDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        depthDependency.dstSubpass = 0;
+        depthDependency.srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        depthDependency.srcAccessMask = 0;
+        depthDependency.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        depthDependency.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        //array of 2 dependencies, one for color, two for depth
+        VkSubpassDependency dependencies[2] = { dependency, depthDependency };
+
+        //array of 2 attachments, one for the color, and other for depth
+        VkAttachmentDescription attachments[2] = { colorAttachment,depthAttachment };
+
 
         VkRenderPassCreateInfo renderPassInfo = {};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 
         //connect the color attachment to the info
-        renderPassInfo.attachmentCount = 1;
-        renderPassInfo.pAttachments = &colorAttachment;
+        renderPassInfo.attachmentCount = 2;
+        renderPassInfo.pAttachments = &attachments[0];
         //connect the subpass to the info
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
+
+        renderPassInfo.dependencyCount = 2;
+        renderPassInfo.pDependencies = &dependencies[0];
 
         VK_CHECK(vkCreateRenderPass(mDevice, &renderPassInfo, nullptr, &mRenderpass));
 
@@ -358,9 +410,13 @@ namespace cw::graphics {
 
         //create framebuffers for each of the swapchain image views
         for (int i = 0; i < swapChainImageCount; i++) {
-            fbInfo.pAttachments = &mSwapchainImageViews[i];
-            VK_CHECK(vkCreateFramebuffer(mDevice, &fbInfo, nullptr, &mFramebuffers[i]));
+            VkImageView attachments[2];
+            attachments[0] = mSwapchainImageViews[i];
+            attachments[1] = mDepthImageView;
 
+            fbInfo.pAttachments = attachments;
+            fbInfo.attachmentCount = 2;
+            VK_CHECK(vkCreateFramebuffer(mDevice, &fbInfo, nullptr, &mFramebuffers[i]));
             mMainDeletionQueue.push_function([=]() {
                 vkDestroyFramebuffer(mDevice, mFramebuffers[i], nullptr);
                 vkDestroyImageView(mDevice, mSwapchainImageViews[i], nullptr);
@@ -474,6 +530,7 @@ namespace cw::graphics {
         //use the triangle layout we created
         pipelineBuilder.mPipelineLayout = mTrianglePipelineLayout;
 
+        pipelineBuilder.mDepthStencil = init::depthStencilStateCreateInfo(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
         //finally build the pipeline
         mTrianglePipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
 
@@ -540,6 +597,7 @@ namespace cw::graphics {
 
         pipelineBuilder.mPipelineLayout = mMeshPipelineLayout;
         mMeshPipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
+        createMaterial(mMeshPipeline, mMeshPipelineLayout, "defaultmesh");
 
         //destroy all shader modules, outside the queue
         vkDestroyShaderModule(mDevice, meshVertShader, nullptr);
@@ -575,9 +633,13 @@ namespace cw::graphics {
         mTriangleMesh.mVertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
         mTriangleMesh.mVertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
 
-        //we don't care about the vertex normals
+        mMonkeyMesh.loadFromObj("res/meshes/monkey_smooth.obj");
 
         uploadMesh(mTriangleMesh);
+        uploadMesh(mMonkeyMesh);
+
+        mMeshes["monkey"] = mMonkeyMesh;
+        mMeshes["triangle"] = mTriangleMesh;
     }
 
     void Engine::uploadMesh(Mesh &mesh) {
@@ -654,5 +716,103 @@ namespace cw::graphics {
         }
         *outShaderModule = shaderModule;
         return true;
+    }
+
+    Material *Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout, const std::string &name) {
+        Material mat{};
+        mat.pipeline = pipeline;
+        mat.pipelineLayout = layout;
+        mMaterials[name] = mat;
+        return &mMaterials[name];
+    }
+
+    Material *Engine::getMaterial(const std::string &name) {
+        //search for the object, and return nullptr if not found
+        auto it = mMaterials.find(name);
+        if (it == mMaterials.end()) {
+            return nullptr;
+        }
+        else {
+            return &(*it).second;
+        }
+    }
+
+    Mesh *Engine::getMesh(const std::string &name) {
+        auto it = mMeshes.find(name);
+        if (it == mMeshes.end()) {
+            return nullptr;
+        }
+        else {
+            return &(*it).second;
+        }
+    }
+
+    void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, int count) {
+        //make a model view matrix for rendering the object
+        //camera view
+        glm::vec3 camPos = { 0.f,-6.f,-10.f };
+
+        glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);
+        //camera projection
+        glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
+        projection[1][1] *= -1;
+
+        Mesh* lastMesh = nullptr;
+        Material* lastMaterial = nullptr;
+        for (int i = 0; i < count; i++)
+        {
+            RenderObject& object = first[i];
+
+            //only bind the pipeline if it doesn't match with the already bound one
+            if (object.material != lastMaterial) {
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
+                lastMaterial = object.material;
+            }
+
+
+            glm::mat4 model = object.transformMatrix;
+            //final render matrix, that we are calculating on the cpu
+            glm::mat4 mesh_matrix = projection * view * model;
+
+            MeshPushConstants constants{};
+            constants.mRenderMatrix = mesh_matrix;
+
+            //upload the mesh to the GPU via push constants
+            vkCmdPushConstants(cmd, object.material->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
+
+            //only bind the mesh if it's a different one from last bind
+            if (object.mesh != lastMesh) {
+                //bind the mesh vertex buffer with offset 0
+                VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &object.mesh->mVertexBuffer.mBuffer, &offset);
+                lastMesh = object.mesh;
+            }
+            //we can now draw
+            vkCmdDraw(cmd, object.mesh->mVertices.size(), 1, 0, 0);
+        }
+    }
+
+    void Engine::initScenes() {
+        RenderObject monkey{};
+        monkey.mesh = getMesh("monkey");
+        monkey.material = getMaterial("defaultmesh");
+        monkey.transformMatrix = glm::mat4{ 1.0f };
+
+        mRenderables.push_back(monkey);
+
+        for (int x = -20; x <= 20; x++) {
+            for (int y = -20; y <= 20; y++) {
+
+                RenderObject tri{};
+                tri.mesh = getMesh("triangle");
+                tri.material = getMaterial("defaultmesh");
+                glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(x, 0, y));
+                glm::mat4 scale = glm::scale(glm::mat4{ 1.0 }, glm::vec3(0.2, 0.2, 0.2));
+                tri.transformMatrix = translation * scale;
+
+                mRenderables.push_back(tri);
+            }
+        }
     }
 }

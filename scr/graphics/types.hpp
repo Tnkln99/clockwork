@@ -11,4 +11,10 @@ struct AllocatedBuffer {
     VmaAllocation mAllocation;
 };
 
+struct AllocatedImage {
+    VkImage mImage;
+    VmaAllocation mAllocation;
+};
+
+
 #endif //CLOCKWORK_TYPES_HPP

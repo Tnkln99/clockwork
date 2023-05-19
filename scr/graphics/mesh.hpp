@@ -25,6 +25,8 @@ namespace cw::graphics{
     struct Mesh{
         std::vector<Vertex> mVertices;
         AllocatedBuffer mVertexBuffer;
+
+        bool loadFromObj(const char * filename);
     };
 }
 

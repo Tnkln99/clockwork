@@ -6,7 +6,6 @@
 #include <vector>
 
 namespace cw::graphics{
-
     class Pipeline {
     private:
 
@@ -20,6 +19,7 @@ namespace cw::graphics{
         VkPipelineColorBlendAttachmentState mColorBlendAttachment;
         VkPipelineMultisampleStateCreateInfo mMultisampling;
         VkPipelineLayout mPipelineLayout;
+        VkPipelineDepthStencilStateCreateInfo mDepthStencil;
 
         VkPipeline buildPipeline(VkDevice device, VkRenderPass pass);
     };

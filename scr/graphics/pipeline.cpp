@@ -40,6 +40,7 @@ namespace cw::graphics{
         pipelineInfo.pRasterizationState = &mRasterizer;
         pipelineInfo.pMultisampleState = &mMultisampling;
         pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDepthStencilState = &mDepthStencil;
         pipelineInfo.layout = mPipelineLayout;
         pipelineInfo.renderPass = pass;
         pipelineInfo.subpass = 0;

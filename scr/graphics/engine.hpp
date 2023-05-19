@@ -8,11 +8,23 @@
 #include <deque>
 #include <functional>
 #include <glm/glm.hpp>
+#include <string>
 
 namespace cw::graphics {
     struct MeshPushConstants {
         glm::vec4 mData;
         glm::mat4 mRenderMatrix;
+    };
+
+    struct Material {
+        VkPipeline pipeline;
+        VkPipelineLayout pipelineLayout;
+    };
+
+    struct RenderObject {
+        Mesh* mesh;
+        Material* material;
+        glm::mat4 transformMatrix;
     };
 
     struct DeletionQueue
@@ -80,8 +92,33 @@ namespace cw::graphics {
         VkPipeline mMeshPipeline;
 
         Mesh mTriangleMesh;
+        Mesh mMonkeyMesh;
+
+        VkImageView mDepthImageView;
+        AllocatedImage mDepthImage;
+
+        //the format for the depth image
+        VkFormat mDepthFormat;
 
         DeletionQueue mMainDeletionQueue;
+
+        //default array of renderable objects
+        std::vector<RenderObject> mRenderables;
+
+        std::unordered_map<std::string,Material> mMaterials;
+        std::unordered_map<std::string,Mesh> mMeshes;
+
+        //create material and add it to the map
+        Material* createMaterial(VkPipeline pipeline, VkPipelineLayout layout,const std::string& name);
+
+        //returns nullptr if it can't be found
+        Material* getMaterial(const std::string& name);
+
+        //returns nullptr if it can't be found
+        Mesh* getMesh(const std::string& name);
+
+        //our draw function
+        void drawObjects(VkCommandBuffer cmd,RenderObject* first, int count);
     private:
         void initWindow();
         void initVulkan();
@@ -94,6 +131,8 @@ namespace cw::graphics {
 
         void loadMeshes();
         void uploadMesh(Mesh & mesh);
+
+        void initScenes();
 
         //loads a shader module from a spir-v file. Returns false if it errors
         bool loadShaderModule(const char* filePath, VkShaderModule* outShaderModule) const;

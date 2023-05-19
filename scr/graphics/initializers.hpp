@@ -12,6 +12,13 @@ namespace cw::graphics::init {
 
     VkSemaphoreCreateInfo semaphoreCreateInfo(VkSemaphoreCreateFlags flags = 0);
 
+    VkSubmitInfo submitInfo(VkCommandBuffer* cmd);
+
+    VkPresentInfoKHR presentInfo();
+
+    VkRenderPassBeginInfo renderPassBeginInfo(VkRenderPass renderPass, VkExtent2D windowExtent, VkFramebuffer framebuffer);
+
+
     VkPipelineShaderStageCreateInfo pipelineShaderStageCreateInfo(VkShaderStageFlagBits stage, VkShaderModule shaderModule);
 
     VkPipelineVertexInputStateCreateInfo vertexInputStateCreateInfo();
@@ -25,6 +32,12 @@ namespace cw::graphics::init {
     VkPipelineColorBlendAttachmentState colorBlendAttachmentState();
 
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo();
+
+    VkImageCreateInfo imageCreateInfo(VkFormat format, VkImageUsageFlags usageFlags, VkExtent3D extent);
+
+    VkImageViewCreateInfo imageViewCreateInfo(VkFormat format, VkImage image, VkImageAspectFlags aspectFlags);
+
+    VkPipelineDepthStencilStateCreateInfo depthStencilStateCreateInfo(bool bDepthTest, bool bDepthWrite, VkCompareOp compareOp);
 }
 
 #endif //CLOCKWORK_INITIALIZERS_HPP
