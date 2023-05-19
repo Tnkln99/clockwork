@@ -112,7 +112,7 @@ namespace cw::graphics {
 
         vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        drawObjects(cmd, mRenderables.data(), mRenderables.size());
+        drawObjects(cmd);
 
         //finalize the render pass
         vkCmdEndRenderPass(cmd);
@@ -447,58 +447,8 @@ namespace cw::graphics {
     }
 
     void Engine::initPipelines() {
-        VkShaderModule triangleFragShader;
-        if (!loadShaderModule("res/shaders/triangle.frag.spv", &triangleFragShader))
-        {
-            std::cout << "Error when building the triangle fragment shader module" << std::endl;
-        }
-        else {
-            std::cout << "Triangle fragment shader successfully loaded" << std::endl;
-        }
-
-        VkShaderModule triangleVertexShader;
-        if (!loadShaderModule("res/shaders/triangle.vert.spv", &triangleVertexShader))
-        {
-            std::cout << "Error when building the triangle vertex shader module" << std::endl;
-        }
-        else {
-            std::cout << "Triangle vertex shader successfully loaded" << std::endl;
-        }
-
-        //compile red triangle modules
-        VkShaderModule redTriangleFragShader;
-        if (!loadShaderModule("res/shaders/triangle_red.frag.spv", &redTriangleFragShader))
-        {
-            std::cout << "Error when building the triangle fragment shader module" << std::endl;
-        }
-        else {
-            std::cout << "Red Triangle fragment shader successfully loaded" << std::endl;
-        }
-
-        VkShaderModule redTriangleVertShader;
-        if (!loadShaderModule("res/shaders/triangle_red.vert.spv", &redTriangleVertShader))
-        {
-            std::cout << "Error when building the triangle vertex shader module" << std::endl;
-        }
-        else {
-            std::cout << "Red Triangle vertex shader successfully loaded" << std::endl;
-        }
-
-        //build the pipeline layout that controls the inputs/outputs of the shader
-        //we are not using descriptor sets or other systems yet, so no need to use anything other than empty default
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo = init::pipelineLayoutCreateInfo();
-
-        VK_CHECK(vkCreatePipelineLayout(mDevice, &pipelineLayoutInfo, nullptr, &mTrianglePipelineLayout));
-
         //build the stage-create-info for both vertex and fragment stages. This lets the pipeline know the shader modules per stage
         Pipeline pipelineBuilder;
-
-        pipelineBuilder.mShaderStages.push_back(
-                init::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, triangleVertexShader));
-
-        pipelineBuilder.mShaderStages.push_back(
-                init::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, triangleFragShader));
-
 
         //vertex input controls how to read vertices from vertex buffers. We aren't using it yet
         pipelineBuilder.mVertexInputInfo = init::vertexInputStateCreateInfo();
@@ -527,25 +477,7 @@ namespace cw::graphics {
         //a single blend attachment with no blending and writing to RGBA
         pipelineBuilder.mColorBlendAttachment = init::colorBlendAttachmentState();
 
-        //use the triangle layout we created
-        pipelineBuilder.mPipelineLayout = mTrianglePipelineLayout;
-
         pipelineBuilder.mDepthStencil = init::depthStencilStateCreateInfo(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
-        //finally build the pipeline
-        mTrianglePipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
-
-        //clear the shader stages for the builder
-        pipelineBuilder.mShaderStages.clear();
-
-        //add the other shaders
-        pipelineBuilder.mShaderStages.push_back(
-                init::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, redTriangleVertShader));
-
-        pipelineBuilder.mShaderStages.push_back(
-                init::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, redTriangleFragShader));
-
-        //build the red triangle pipeline
-        mRedTrianglePipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
 
         //build the mesh pipeline
         VertexInputDescription vertexDescription = Vertex::getVertexDescription();
@@ -557,8 +489,6 @@ namespace cw::graphics {
         pipelineBuilder.mVertexInputInfo.pVertexBindingDescriptions = vertexDescription.mBindings.data();
         pipelineBuilder.mVertexInputInfo.vertexBindingDescriptionCount = vertexDescription.mBindings.size();
 
-        //clear the shader stages for the builder
-        pipelineBuilder.mShaderStages.clear();
 
         //compile mesh vertex shader
         VkShaderModule meshVertShader;
@@ -568,6 +498,15 @@ namespace cw::graphics {
         }
         else {
             std::cout << "Mesh Triangle vertex shader successfully loaded" << std::endl;
+        }
+        VkShaderModule triangleFragShader;
+        if (!loadShaderModule("res/shaders/triangle.frag.spv", &triangleFragShader))
+        {
+            std::cout << "Error when building the triangle fragment shader module" << std::endl;
+        }
+        else
+        {
+            std::cout << "Triangle fragment shader successfully loaded" << std::endl;
         }
 
         //add the other shaders
@@ -593,53 +532,54 @@ namespace cw::graphics {
         meshPipelineLayoutInfo.pPushConstantRanges = &pushConstant;
         meshPipelineLayoutInfo.pushConstantRangeCount = 1;
 
-        VK_CHECK(vkCreatePipelineLayout(mDevice, &meshPipelineLayoutInfo, nullptr, &mMeshPipelineLayout));
+        VkPipelineLayout meshPipelineLayout;
+        VkPipeline meshPipeline;
 
-        pipelineBuilder.mPipelineLayout = mMeshPipelineLayout;
-        mMeshPipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
-        createMaterial(mMeshPipeline, mMeshPipelineLayout, "defaultmesh");
+        VK_CHECK(vkCreatePipelineLayout(mDevice, &meshPipelineLayoutInfo, nullptr, &meshPipelineLayout));
+
+        pipelineBuilder.mPipelineLayout = meshPipelineLayout;
+        meshPipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
+        createMaterial(meshPipeline, meshPipelineLayout, "defaultmesh");
 
         //destroy all shader modules, outside the queue
         vkDestroyShaderModule(mDevice, meshVertShader, nullptr);
-        vkDestroyShaderModule(mDevice, redTriangleVertShader, nullptr);
-        vkDestroyShaderModule(mDevice, redTriangleFragShader, nullptr);
         vkDestroyShaderModule(mDevice, triangleFragShader, nullptr);
-        vkDestroyShaderModule(mDevice, triangleVertexShader, nullptr);
 
         mMainDeletionQueue.push_function([=]() {
-            //destroy the 3 pipelines we have created
-            vkDestroyPipeline(mDevice, mRedTrianglePipeline, nullptr);
-            vkDestroyPipeline(mDevice, mTrianglePipeline, nullptr);
-            vkDestroyPipeline(mDevice, mMeshPipeline, nullptr);
+            //destroy the 1 pipelines we have created
+            vkDestroyPipeline(mDevice, meshPipeline, nullptr);
 
             //destroy the pipeline layout that they use
-            vkDestroyPipelineLayout(mDevice, mTrianglePipelineLayout, nullptr);
-            vkDestroyPipelineLayout(mDevice, mMeshPipelineLayout, nullptr);
+            vkDestroyPipelineLayout(mDevice, meshPipelineLayout, nullptr);
         });
     }
 
 
     void Engine::loadMeshes() {
+        Mesh triangleMesh;
+        Mesh monkeyMesh;
+
+
         //make the array 3 vertices long
-        mTriangleMesh.mVertices.resize(3);
+        triangleMesh.mVertices.resize(3);
 
         //vertex positions
-        mTriangleMesh.mVertices[0].position = { 1.f, 1.f, 0.0f };
-        mTriangleMesh.mVertices[1].position = {-1.f, 1.f, 0.0f };
-        mTriangleMesh.mVertices[2].position = { 0.f,-1.f, 0.0f };
+        triangleMesh.mVertices[0].position = { 1.f, 1.f, 0.0f };
+        triangleMesh.mVertices[1].position = {-1.f, 1.f, 0.0f };
+        triangleMesh.mVertices[2].position = { 0.f,-1.f, 0.0f };
 
         //vertex colors all green
-        mTriangleMesh.mVertices[0].color = { 0.f, 1.f, 0.0f }; //pure green
-        mTriangleMesh.mVertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
-        mTriangleMesh.mVertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
+        triangleMesh.mVertices[0].color = { 0.f, 1.f, 0.0f }; //pure green
+        triangleMesh.mVertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
+        triangleMesh.mVertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
 
-        mMonkeyMesh.loadFromObj("res/meshes/monkey_smooth.obj");
+        monkeyMesh.loadFromObj("res/meshes/monkey_smooth.obj");
 
-        uploadMesh(mTriangleMesh);
-        uploadMesh(mMonkeyMesh);
+        uploadMesh(triangleMesh);
+        uploadMesh(monkeyMesh);
 
-        mMeshes["monkey"] = mMonkeyMesh;
-        mMeshes["triangle"] = mTriangleMesh;
+        mMeshes["monkey"] = monkeyMesh;
+        mMeshes["triangle"] = triangleMesh;
     }
 
     void Engine::uploadMesh(Mesh &mesh) {
@@ -718,36 +658,36 @@ namespace cw::graphics {
         return true;
     }
 
-    Material *Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout, const std::string &name) {
+    std::shared_ptr<Material> Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout, const std::string &name) {
         Material mat{};
         mat.pipeline = pipeline;
         mat.pipelineLayout = layout;
         mMaterials[name] = mat;
-        return &mMaterials[name];
+        return std::make_shared<Material>(mMaterials[name]);
     }
 
-    Material *Engine::getMaterial(const std::string &name) {
+    std::shared_ptr<Material> Engine::getMaterial(const std::string &name) {
         //search for the object, and return nullptr if not found
         auto it = mMaterials.find(name);
         if (it == mMaterials.end()) {
             return nullptr;
         }
         else {
-            return &(*it).second;
+            return std::make_shared<Material>((*it).second);
         }
     }
 
-    Mesh *Engine::getMesh(const std::string &name) {
+    std::shared_ptr<Mesh> Engine::getMesh(const std::string &name) {
         auto it = mMeshes.find(name);
         if (it == mMeshes.end()) {
             return nullptr;
         }
         else {
-            return &(*it).second;
+            return std::make_shared<Mesh>((*it).second);
         }
     }
 
-    void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, int count) {
+    void Engine::drawObjects(VkCommandBuffer cmd) {
         //make a model view matrix for rendering the object
         //camera view
         glm::vec3 camPos = { 0.f,-6.f,-10.f };
@@ -757,18 +697,17 @@ namespace cw::graphics {
         glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
         projection[1][1] *= -1;
 
-        Mesh* lastMesh = nullptr;
-        Material* lastMaterial = nullptr;
-        for (int i = 0; i < count; i++)
+        std::shared_ptr<Mesh> lastMesh = nullptr;
+        std::shared_ptr<Material> lastMaterial = nullptr;
+        for (auto & object : mRenderables)
         {
-            RenderObject& object = first[i];
-
             //only bind the pipeline if it doesn't match with the already bound one
             if (object.material != lastMaterial) {
-
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
                 lastMaterial = object.material;
             }
+
+            object.mesh.use_count();
 
 
             glm::mat4 model = object.transformMatrix;

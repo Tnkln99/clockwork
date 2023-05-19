@@ -9,6 +9,7 @@
 #include <functional>
 #include <glm/glm.hpp>
 #include <string>
+#include <memory>
 
 namespace cw::graphics {
     struct MeshPushConstants {
@@ -22,8 +23,8 @@ namespace cw::graphics {
     };
 
     struct RenderObject {
-        Mesh* mesh;
-        Material* material;
+        std::shared_ptr<Mesh> mesh;
+        std::shared_ptr<Material> material;
         glm::mat4 transformMatrix;
     };
 
@@ -84,16 +85,6 @@ namespace cw::graphics {
         VkSemaphore mPresentSemaphore, mRenderSemaphore;
         VkFence mRenderFence;
 
-        VkPipelineLayout mTrianglePipelineLayout;
-        VkPipeline mTrianglePipeline;
-        VkPipeline mRedTrianglePipeline;
-
-        VkPipelineLayout mMeshPipelineLayout;
-        VkPipeline mMeshPipeline;
-
-        Mesh mTriangleMesh;
-        Mesh mMonkeyMesh;
-
         VkImageView mDepthImageView;
         AllocatedImage mDepthImage;
 
@@ -109,16 +100,16 @@ namespace cw::graphics {
         std::unordered_map<std::string,Mesh> mMeshes;
 
         //create material and add it to the map
-        Material* createMaterial(VkPipeline pipeline, VkPipelineLayout layout,const std::string& name);
+        std::shared_ptr<Material> createMaterial(VkPipeline pipeline, VkPipelineLayout layout,const std::string& name);
 
         //returns nullptr if it can't be found
-        Material* getMaterial(const std::string& name);
+        std::shared_ptr<Material> getMaterial(const std::string& name);
 
         //returns nullptr if it can't be found
-        Mesh* getMesh(const std::string& name);
+        std::shared_ptr<Mesh> getMesh(const std::string& name);
 
         //our draw function
-        void drawObjects(VkCommandBuffer cmd,RenderObject* first, int count);
+        void drawObjects(VkCommandBuffer cmd);
     private:
         void initWindow();
         void initVulkan();
