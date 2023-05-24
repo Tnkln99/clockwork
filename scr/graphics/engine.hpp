@@ -12,6 +12,25 @@
 #include <memory>
 
 namespace cw::graphics {
+    struct GPUCameraData{
+        glm::mat4 view;
+        glm::mat4 proj;
+        glm::mat4 viewProj;
+    };
+
+
+    struct FrameData {
+        VkSemaphore mPresentSemaphore, mRenderSemaphore;
+        VkFence mRenderFence;
+
+        VkCommandPool mCommandPool;
+        VkCommandBuffer mMainCommandBuffer;
+
+        //buffer that holds a single GPUCameraData to use when rendering
+        AllocatedBuffer cameraBuffer;
+        VkDescriptorSet globalDescriptor;
+    };
+
     struct MeshPushConstants {
         glm::vec4 mData;
         glm::mat4 mRenderMatrix;
@@ -46,6 +65,7 @@ namespace cw::graphics {
         }
     };
 
+    constexpr unsigned int cFrameOverlap = 2;
 
     class Engine {
     public:
@@ -76,14 +96,11 @@ namespace cw::graphics {
         VkQueue mGraphicsQueue{}; //queue we will submit to
         uint32_t mGraphicsQueueFamily; //family of that queue
 
-        VkCommandPool mCommandPool; //the command pool for our commands
-        VkCommandBuffer mMainCommandBuffer; //the buffer we will record into
+        // frame storage
+        FrameData mFrames[cFrameOverlap];
 
         VkRenderPass mRenderpass;
         std::vector<VkFramebuffer> mFramebuffers;
-
-        VkSemaphore mPresentSemaphore, mRenderSemaphore;
-        VkFence mRenderFence;
 
         VkImageView mDepthImageView;
         AllocatedImage mDepthImage;
@@ -108,6 +125,9 @@ namespace cw::graphics {
         //returns nullptr if it can't be found
         std::shared_ptr<Mesh> getMesh(const std::string& name);
 
+        // getter for the frame we are rendering right now
+        FrameData& getCurrentFrame();
+
         //our draw function
         void drawObjects(VkCommandBuffer cmd);
     private:
@@ -127,6 +147,7 @@ namespace cw::graphics {
 
         //loads a shader module from a spir-v file. Returns false if it errors
         bool loadShaderModule(const char* filePath, VkShaderModule* outShaderModule) const;
+        AllocatedBuffer createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
 
         bool mIsInit {false};
         int mFrameNumber {0};

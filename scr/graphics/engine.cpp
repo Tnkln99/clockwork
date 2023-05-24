@@ -43,7 +43,9 @@ namespace cw::graphics {
     void Engine::cleanup() {
         if (mIsInit) {
             //make sure the GPU has stopped doing its things
-            vkWaitForFences(mDevice, 1, &mRenderFence, true, 1000000000);
+            vkWaitForFences(mDevice, 1, &getCurrentFrame().mRenderFence, true, 1000000000);
+            --mFrameNumber;
+            vkWaitForFences(mDevice, 1, &getCurrentFrame().mRenderFence, true, 1000000000);
 
             mMainDeletionQueue.flush();
 
@@ -67,18 +69,18 @@ namespace cw::graphics {
 
     void Engine::draw() {
         //wait until the GPU has finished rendering the last frame. Timeout of 1 second
-        VK_CHECK(vkWaitForFences(mDevice, 1, &mRenderFence, true, 1000000000));
-        VK_CHECK(vkResetFences(mDevice, 1, &mRenderFence));
+        VK_CHECK(vkWaitForFences(mDevice, 1, &getCurrentFrame().mRenderFence, true, 1000000000));
+        VK_CHECK(vkResetFences(mDevice, 1, &getCurrentFrame().mRenderFence));
 
         //request image from the swapchain, one second timeout
         uint32_t swapchainImageIndex;
-        VK_CHECK(vkAcquireNextImageKHR(mDevice, mSwapchain, 1000000000, mPresentSemaphore, nullptr, &swapchainImageIndex));
+        VK_CHECK(vkAcquireNextImageKHR(mDevice, mSwapchain, 1000000000, getCurrentFrame().mPresentSemaphore, nullptr, &swapchainImageIndex));
 
         //now that we are sure that the commands finished executing, we can safely reset the command buffer to begin recording again.
-        VK_CHECK(vkResetCommandBuffer(mMainCommandBuffer, 0));
+        VK_CHECK(vkResetCommandBuffer(getCurrentFrame().mMainCommandBuffer, 0));
 
         //naming it cmd for shorter writing
-        VkCommandBuffer cmd = mMainCommandBuffer;
+        VkCommandBuffer cmd = getCurrentFrame().mMainCommandBuffer;
 
         //begin the command buffer recording. We will use this command buffer exactly once, so we want to let Vulkan know that
         VkCommandBufferBeginInfo cmdBeginInfo = {};
@@ -132,17 +134,17 @@ namespace cw::graphics {
         submit.pWaitDstStageMask = &waitStage;
 
         submit.waitSemaphoreCount = 1;
-        submit.pWaitSemaphores = &mPresentSemaphore;
+        submit.pWaitSemaphores = &getCurrentFrame().mPresentSemaphore;
 
         submit.signalSemaphoreCount = 1;
-        submit.pSignalSemaphores = &mRenderSemaphore;
+        submit.pSignalSemaphores = &getCurrentFrame().mRenderSemaphore;
 
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &cmd;
 
         //submit command buffer to the queue and execute it.
         // _renderFence will now block until the graphic commands finish execution
-        VK_CHECK(vkQueueSubmit(mGraphicsQueue, 1, &submit, mRenderFence));
+        VK_CHECK(vkQueueSubmit(mGraphicsQueue, 1, &submit, getCurrentFrame().mRenderFence));
 
         // this will put the image we just rendered into the visible window.
         // we want to wait on the _renderSemaphore for that,
@@ -154,7 +156,7 @@ namespace cw::graphics {
         presentInfo.pSwapchains = &mSwapchain;
         presentInfo.swapchainCount = 1;
 
-        presentInfo.pWaitSemaphores = &mRenderSemaphore;
+        presentInfo.pWaitSemaphores = &getCurrentFrame().mRenderSemaphore;
         presentInfo.waitSemaphoreCount = 1;
 
         presentInfo.pImageIndices = &swapchainImageIndex;
@@ -284,16 +286,18 @@ namespace cw::graphics {
         //we also want the pool to allow for resetting of individual command buffers
         VkCommandPoolCreateInfo commandPoolInfo = init::commandPoolCreateInfo(mGraphicsQueueFamily, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
-        VK_CHECK(vkCreateCommandPool(mDevice, &commandPoolInfo, nullptr, &mCommandPool));
+        for (int i = 0; i < cFrameOverlap; i++) {
+            VK_CHECK(vkCreateCommandPool(mDevice, &commandPoolInfo, nullptr, &mFrames[i].mCommandPool));
 
-        //allocate the default command buffer that we will use for rendering
-        VkCommandBufferAllocateInfo cmdAllocInfo = init::commandBufferAllocateInfo(mCommandPool, 1);
+            //allocate the default command buffer that we will use for rendering
+            VkCommandBufferAllocateInfo cmdAllocInfo = init::commandBufferAllocateInfo(mFrames[i].mCommandPool, 1);
 
-        VK_CHECK(vkAllocateCommandBuffers(mDevice, &cmdAllocInfo, &mMainCommandBuffer));
+            VK_CHECK(vkAllocateCommandBuffers(mDevice, &cmdAllocInfo, &mFrames[i].mMainCommandBuffer));
 
-        mMainDeletionQueue.push_function([=]() {
-            vkDestroyCommandPool(mDevice, mCommandPool, nullptr);
-        });
+            mMainDeletionQueue.push_function([=]() {
+                vkDestroyCommandPool(mDevice, mFrames[i].mCommandPool, nullptr);
+            });
+        }
     }
 
     void Engine::initDefaultRenderpass() {
@@ -427,23 +431,27 @@ namespace cw::graphics {
     void Engine::initSyncStructure() {
         VkFenceCreateInfo fenceCreateInfo = init::fenceCreateInfo(VK_FENCE_CREATE_SIGNALED_BIT);
 
-        VK_CHECK(vkCreateFence(mDevice, &fenceCreateInfo, nullptr, &mRenderFence));
-
-        //enqueue the destruction of the fence
-        mMainDeletionQueue.push_function([=]() {
-            vkDestroyFence(mDevice, mRenderFence, nullptr);
-        });
-
         VkSemaphoreCreateInfo semaphoreCreateInfo = init::semaphoreCreateInfo();
 
-        VK_CHECK(vkCreateSemaphore(mDevice, &semaphoreCreateInfo, nullptr, &mPresentSemaphore));
-        VK_CHECK(vkCreateSemaphore(mDevice, &semaphoreCreateInfo, nullptr, &mRenderSemaphore));
+        for (int i = 0; i < cFrameOverlap; i++) {
 
-        //enqueue the destruction of semaphores
-        mMainDeletionQueue.push_function([=]() {
-            vkDestroySemaphore(mDevice, mPresentSemaphore, nullptr);
-            vkDestroySemaphore(mDevice, mRenderSemaphore, nullptr);
-        });
+            VK_CHECK(vkCreateFence(mDevice, &fenceCreateInfo, nullptr, &mFrames[i].mRenderFence));
+
+            //enqueue the destruction of the fence
+            mMainDeletionQueue.push_function([=]() {
+                vkDestroyFence(mDevice, mFrames[i].mRenderFence, nullptr);
+            });
+
+
+            VK_CHECK(vkCreateSemaphore(mDevice, &semaphoreCreateInfo, nullptr, &mFrames[i].mPresentSemaphore));
+            VK_CHECK(vkCreateSemaphore(mDevice, &semaphoreCreateInfo, nullptr, &mFrames[i].mRenderSemaphore));
+
+            //enqueue the destruction of semaphores
+            mMainDeletionQueue.push_function([=]() {
+                vkDestroySemaphore(mDevice, mFrames[i].mPresentSemaphore, nullptr);
+                vkDestroySemaphore(mDevice, mFrames[i].mRenderSemaphore, nullptr);
+            });
+        }
     }
 
     void Engine::initPipelines() {
@@ -558,7 +566,6 @@ namespace cw::graphics {
     void Engine::loadMeshes() {
         Mesh triangleMesh;
         Mesh monkeyMesh;
-
 
         //make the array 3 vertices long
         triangleMesh.mVertices.resize(3);
@@ -707,9 +714,6 @@ namespace cw::graphics {
                 lastMaterial = object.material;
             }
 
-            object.mesh.use_count();
-
-
             glm::mat4 model = object.transformMatrix;
             //final render matrix, that we are calculating on the cpu
             glm::mat4 mesh_matrix = projection * view * model;
@@ -754,4 +758,33 @@ namespace cw::graphics {
             }
         }
     }
+
+    FrameData &Engine::getCurrentFrame() {
+        return mFrames[mFrameNumber % cFrameOverlap];
+    }
+
+    AllocatedBuffer Engine::createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage) {
+        //allocate vertex buffer
+        VkBufferCreateInfo bufferInfo = {};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.pNext = nullptr;
+
+        bufferInfo.size = allocSize;
+        bufferInfo.usage = usage;
+
+
+        VmaAllocationCreateInfo vmaAllocInfo = {};
+        vmaAllocInfo.usage = memoryUsage;
+
+        AllocatedBuffer newBuffer{};
+
+        //allocate the buffer
+        VK_CHECK(vmaCreateBuffer(mAllocator, &bufferInfo, &vmaAllocInfo,
+                                 &newBuffer.mBuffer,
+                                 &newBuffer.mAllocation,
+                                 nullptr));
+
+        return newBuffer;
+    }
+
 }
