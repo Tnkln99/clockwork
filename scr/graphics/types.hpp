@@ -7,13 +7,13 @@
 #include <vk_mem_alloc.h>
 
 struct AllocatedBuffer {
-    VkBuffer mBuffer;
-    VmaAllocation mAllocation;
+    VkBuffer buffer;
+    VmaAllocation allocation;
 };
 
 struct AllocatedImage {
-    VkImage mImage;
-    VmaAllocation mAllocation;
+    VkImage image;
+    VmaAllocation allocation;
 };
 
 

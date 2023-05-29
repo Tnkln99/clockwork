@@ -18,13 +18,12 @@ namespace cw::graphics {
         glm::mat4 viewProj;
     };
 
-
     struct FrameData {
-        VkSemaphore mPresentSemaphore, mRenderSemaphore;
-        VkFence mRenderFence;
+        VkSemaphore presentSemaphore, renderSemaphore;
+        VkFence renderFence;
 
-        VkCommandPool mCommandPool;
-        VkCommandBuffer mMainCommandBuffer;
+        VkCommandPool commandPool;
+        VkCommandBuffer mainCommandBuffer;
 
         //buffer that holds a single GPUCameraData to use when rendering
         AllocatedBuffer cameraBuffer;
@@ -32,8 +31,8 @@ namespace cw::graphics {
     };
 
     struct MeshPushConstants {
-        glm::vec4 mData;
-        glm::mat4 mRenderMatrix;
+        glm::vec4 data;
+        glm::mat4 renderMatrix;
     };
 
     struct Material {
@@ -116,6 +115,9 @@ namespace cw::graphics {
         std::unordered_map<std::string,Material> mMaterials;
         std::unordered_map<std::string,Mesh> mMeshes;
 
+        VkDescriptorSetLayout mGlobalSetLayout;
+        VkDescriptorPool mDescriptorPool;
+
         //create material and add it to the map
         std::shared_ptr<Material> createMaterial(VkPipeline pipeline, VkPipelineLayout layout,const std::string& name);
 
@@ -139,6 +141,7 @@ namespace cw::graphics {
         void initFramebuffers();
         void initSyncStructure();
         void initPipelines();
+        void initDescriptors();
 
         void loadMeshes();
         void uploadMesh(Mesh & mesh);
@@ -154,6 +157,8 @@ namespace cw::graphics {
 
         VkExtent2D mWindowExtent {800, 600};
         GLFWwindow* mWindow{ nullptr };
+
+        VkPhysicalDeviceProperties mGpuProperties;
     };
 }
 

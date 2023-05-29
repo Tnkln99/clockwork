@@ -2,7 +2,6 @@
 #include "pipeline.hpp"
 
 namespace cw::graphics{
-
     VkPipeline Pipeline::buildPipeline(VkDevice device, VkRenderPass pass) {
         //make viewport state from our stored viewport and scissor.
         //at the moment we won't support multiple viewports or scissors

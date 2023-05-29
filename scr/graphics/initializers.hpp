@@ -18,7 +18,6 @@ namespace cw::graphics::init {
 
     VkRenderPassBeginInfo renderPassBeginInfo(VkRenderPass renderPass, VkExtent2D windowExtent, VkFramebuffer framebuffer);
 
-
     VkPipelineShaderStageCreateInfo pipelineShaderStageCreateInfo(VkShaderStageFlagBits stage, VkShaderModule shaderModule);
 
     VkPipelineVertexInputStateCreateInfo vertexInputStateCreateInfo();

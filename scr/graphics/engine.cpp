@@ -31,6 +31,7 @@ namespace cw::graphics {
         initDefaultRenderpass();
         initFramebuffers();
         initSyncStructure();
+        initDescriptors();
         initPipelines();
 
         loadMeshes();
@@ -43,9 +44,7 @@ namespace cw::graphics {
     void Engine::cleanup() {
         if (mIsInit) {
             //make sure the GPU has stopped doing its things
-            vkWaitForFences(mDevice, 1, &getCurrentFrame().mRenderFence, true, 1000000000);
-            --mFrameNumber;
-            vkWaitForFences(mDevice, 1, &getCurrentFrame().mRenderFence, true, 1000000000);
+            vkDeviceWaitIdle(mDevice);
 
             mMainDeletionQueue.flush();
 
@@ -69,18 +68,18 @@ namespace cw::graphics {
 
     void Engine::draw() {
         //wait until the GPU has finished rendering the last frame. Timeout of 1 second
-        VK_CHECK(vkWaitForFences(mDevice, 1, &getCurrentFrame().mRenderFence, true, 1000000000));
-        VK_CHECK(vkResetFences(mDevice, 1, &getCurrentFrame().mRenderFence));
+        VK_CHECK(vkWaitForFences(mDevice, 1, &getCurrentFrame().renderFence, true, 1000000000));
+        VK_CHECK(vkResetFences(mDevice, 1, &getCurrentFrame().renderFence));
 
         //request image from the swapchain, one second timeout
         uint32_t swapchainImageIndex;
-        VK_CHECK(vkAcquireNextImageKHR(mDevice, mSwapchain, 1000000000, getCurrentFrame().mPresentSemaphore, nullptr, &swapchainImageIndex));
+        VK_CHECK(vkAcquireNextImageKHR(mDevice, mSwapchain, 1000000000, getCurrentFrame().presentSemaphore, nullptr, &swapchainImageIndex));
 
         //now that we are sure that the commands finished executing, we can safely reset the command buffer to begin recording again.
-        VK_CHECK(vkResetCommandBuffer(getCurrentFrame().mMainCommandBuffer, 0));
+        VK_CHECK(vkResetCommandBuffer(getCurrentFrame().mainCommandBuffer, 0));
 
         //naming it cmd for shorter writing
-        VkCommandBuffer cmd = getCurrentFrame().mMainCommandBuffer;
+        VkCommandBuffer cmd = getCurrentFrame().mainCommandBuffer;
 
         //begin the command buffer recording. We will use this command buffer exactly once, so we want to let Vulkan know that
         VkCommandBufferBeginInfo cmdBeginInfo = {};
@@ -134,17 +133,17 @@ namespace cw::graphics {
         submit.pWaitDstStageMask = &waitStage;
 
         submit.waitSemaphoreCount = 1;
-        submit.pWaitSemaphores = &getCurrentFrame().mPresentSemaphore;
+        submit.pWaitSemaphores = &getCurrentFrame().presentSemaphore;
 
         submit.signalSemaphoreCount = 1;
-        submit.pSignalSemaphores = &getCurrentFrame().mRenderSemaphore;
+        submit.pSignalSemaphores = &getCurrentFrame().renderSemaphore;
 
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &cmd;
 
         //submit command buffer to the queue and execute it.
         // _renderFence will now block until the graphic commands finish execution
-        VK_CHECK(vkQueueSubmit(mGraphicsQueue, 1, &submit, getCurrentFrame().mRenderFence));
+        VK_CHECK(vkQueueSubmit(mGraphicsQueue, 1, &submit, getCurrentFrame().renderFence));
 
         // this will put the image we just rendered into the visible window.
         // we want to wait on the _renderSemaphore for that,
@@ -156,7 +155,7 @@ namespace cw::graphics {
         presentInfo.pSwapchains = &mSwapchain;
         presentInfo.swapchainCount = 1;
 
-        presentInfo.pWaitSemaphores = &getCurrentFrame().mRenderSemaphore;
+        presentInfo.pWaitSemaphores = &getCurrentFrame().renderSemaphore;
         presentInfo.waitSemaphoreCount = 1;
 
         presentInfo.pImageIndices = &swapchainImageIndex;
@@ -224,6 +223,9 @@ namespace cw::graphics {
         allocatorInfo.device = mDevice;
         allocatorInfo.instance = mInstance;
         vmaCreateAllocator(&allocatorInfo, &mAllocator);
+
+        mGpuProperties = vkbDevice.physical_device.properties;
+        std::cout << "The GPU has a minimum buffer alignment of " << mGpuProperties.limits.minUniformBufferOffsetAlignment << std::endl;
     }
 
     void Engine::initSwapchain() {
@@ -267,17 +269,17 @@ namespace cw::graphics {
         imgAllocInfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         //allocate and create the image
-        vmaCreateImage(mAllocator, &imgInfo, &imgAllocInfo, &mDepthImage.mImage, &mDepthImage.mAllocation, nullptr);
+        vmaCreateImage(mAllocator, &imgInfo, &imgAllocInfo, &mDepthImage.image, &mDepthImage.allocation, nullptr);
 
         //build an image-view for the depth image to use for rendering
-        VkImageViewCreateInfo dview_info = init::imageViewCreateInfo(mDepthFormat, mDepthImage.mImage, VK_IMAGE_ASPECT_DEPTH_BIT);
+        VkImageViewCreateInfo dview_info = init::imageViewCreateInfo(mDepthFormat, mDepthImage.image, VK_IMAGE_ASPECT_DEPTH_BIT);
 
         VK_CHECK(vkCreateImageView(mDevice, &dview_info, nullptr, &mDepthImageView));
 
         //add to deletion queues
         mMainDeletionQueue.push_function([=]() {
             vkDestroyImageView(mDevice, mDepthImageView, nullptr);
-            vmaDestroyImage(mAllocator, mDepthImage.mImage, mDepthImage.mAllocation);
+            vmaDestroyImage(mAllocator, mDepthImage.image, mDepthImage.allocation);
         });
     }
 
@@ -287,15 +289,15 @@ namespace cw::graphics {
         VkCommandPoolCreateInfo commandPoolInfo = init::commandPoolCreateInfo(mGraphicsQueueFamily, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
         for (int i = 0; i < cFrameOverlap; i++) {
-            VK_CHECK(vkCreateCommandPool(mDevice, &commandPoolInfo, nullptr, &mFrames[i].mCommandPool));
+            VK_CHECK(vkCreateCommandPool(mDevice, &commandPoolInfo, nullptr, &mFrames[i].commandPool));
 
             //allocate the default command buffer that we will use for rendering
-            VkCommandBufferAllocateInfo cmdAllocInfo = init::commandBufferAllocateInfo(mFrames[i].mCommandPool, 1);
+            VkCommandBufferAllocateInfo cmdAllocInfo = init::commandBufferAllocateInfo(mFrames[i].commandPool, 1);
 
-            VK_CHECK(vkAllocateCommandBuffers(mDevice, &cmdAllocInfo, &mFrames[i].mMainCommandBuffer));
+            VK_CHECK(vkAllocateCommandBuffers(mDevice, &cmdAllocInfo, &mFrames[i].mainCommandBuffer));
 
             mMainDeletionQueue.push_function([=]() {
-                vkDestroyCommandPool(mDevice, mFrames[i].mCommandPool, nullptr);
+                vkDestroyCommandPool(mDevice, mFrames[i].commandPool, nullptr);
             });
         }
     }
@@ -434,22 +436,21 @@ namespace cw::graphics {
         VkSemaphoreCreateInfo semaphoreCreateInfo = init::semaphoreCreateInfo();
 
         for (int i = 0; i < cFrameOverlap; i++) {
-
-            VK_CHECK(vkCreateFence(mDevice, &fenceCreateInfo, nullptr, &mFrames[i].mRenderFence));
+            VK_CHECK(vkCreateFence(mDevice, &fenceCreateInfo, nullptr, &mFrames[i].renderFence));
 
             //enqueue the destruction of the fence
             mMainDeletionQueue.push_function([=]() {
-                vkDestroyFence(mDevice, mFrames[i].mRenderFence, nullptr);
+                vkDestroyFence(mDevice, mFrames[i].renderFence, nullptr);
             });
 
 
-            VK_CHECK(vkCreateSemaphore(mDevice, &semaphoreCreateInfo, nullptr, &mFrames[i].mPresentSemaphore));
-            VK_CHECK(vkCreateSemaphore(mDevice, &semaphoreCreateInfo, nullptr, &mFrames[i].mRenderSemaphore));
+            VK_CHECK(vkCreateSemaphore(mDevice, &semaphoreCreateInfo, nullptr, &mFrames[i].presentSemaphore));
+            VK_CHECK(vkCreateSemaphore(mDevice, &semaphoreCreateInfo, nullptr, &mFrames[i].renderSemaphore));
 
             //enqueue the destruction of semaphores
             mMainDeletionQueue.push_function([=]() {
-                vkDestroySemaphore(mDevice, mFrames[i].mPresentSemaphore, nullptr);
-                vkDestroySemaphore(mDevice, mFrames[i].mRenderSemaphore, nullptr);
+                vkDestroySemaphore(mDevice, mFrames[i].presentSemaphore, nullptr);
+                vkDestroySemaphore(mDevice, mFrames[i].renderSemaphore, nullptr);
             });
         }
     }
@@ -497,11 +498,9 @@ namespace cw::graphics {
         pipelineBuilder.mVertexInputInfo.pVertexBindingDescriptions = vertexDescription.mBindings.data();
         pipelineBuilder.mVertexInputInfo.vertexBindingDescriptionCount = vertexDescription.mBindings.size();
 
-
         //compile mesh vertex shader
         VkShaderModule meshVertShader;
-        if (!loadShaderModule("res/shaders/tri_mesh.vert.spv", &meshVertShader))
-        {
+        if (!loadShaderModule("res/shaders/tri_mesh.vert.spv", &meshVertShader)) {
             std::cout << "Error when building the triangle vertex shader module" << std::endl;
         }
         else {
@@ -540,6 +539,10 @@ namespace cw::graphics {
         meshPipelineLayoutInfo.pPushConstantRanges = &pushConstant;
         meshPipelineLayoutInfo.pushConstantRangeCount = 1;
 
+        //hook the global set layout
+        meshPipelineLayoutInfo.setLayoutCount = 1;
+        meshPipelineLayoutInfo.pSetLayouts = &mGlobalSetLayout;
+
         VkPipelineLayout meshPipelineLayout;
         VkPipeline meshPipeline;
 
@@ -563,6 +566,100 @@ namespace cw::graphics {
     }
 
 
+    void Engine::initDescriptors() {
+        //information about the binding.
+        VkDescriptorSetLayoutBinding camBufferBinding = {};
+        camBufferBinding.binding = 0;
+        camBufferBinding.descriptorCount = 1;
+        // it's a uniform buffer binding
+        camBufferBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+
+        // we use it from the vertex shader
+        camBufferBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+
+        VkDescriptorSetLayoutCreateInfo setInfo = {};
+        setInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        setInfo.pNext = nullptr;
+
+        //we are going to have 1 binding
+        setInfo.bindingCount = 1;
+        //no flags
+        setInfo.flags = 0;
+        //point to the camera buffer binding
+        setInfo.pBindings = &camBufferBinding;
+
+        vkCreateDescriptorSetLayout(mDevice, &setInfo, nullptr, &mGlobalSetLayout);
+
+        //create a descriptor pool that will hold 10 uniform buffers
+        std::vector<VkDescriptorPoolSize> sizes =
+        {
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10 }
+        };
+
+        VkDescriptorPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.flags = 0;
+        poolInfo.maxSets = 10;
+        poolInfo.poolSizeCount = (uint32_t)sizes.size();
+        poolInfo.pPoolSizes = sizes.data();
+
+        vkCreateDescriptorPool(mDevice, &poolInfo, nullptr, &mDescriptorPool);
+
+        for (int i = 0; i < cFrameOverlap; i++)
+        {
+            mFrames[i].cameraBuffer = createBuffer(sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+            //allocate one descriptor set for each frame
+            VkDescriptorSetAllocateInfo allocInfo ={};
+            allocInfo.pNext = nullptr;
+            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            //using the pool we just set
+            allocInfo.descriptorPool = mDescriptorPool;
+            //only 1 descriptor
+            allocInfo.descriptorSetCount = 1;
+            //using the global data layout
+            allocInfo.pSetLayouts = &mGlobalSetLayout;
+
+            vkAllocateDescriptorSets(mDevice, &allocInfo, &mFrames[i].globalDescriptor);
+
+            //information about the buffer we want to point at in the descriptor
+            VkDescriptorBufferInfo bufferInfo;
+            //it will be the camera buffer
+            bufferInfo.buffer = mFrames[i].cameraBuffer.buffer;
+            //at 0 offset
+            bufferInfo.offset = 0;
+            //of the size of a camera data struct
+            bufferInfo.range = sizeof(GPUCameraData);
+
+            VkWriteDescriptorSet setWrite = {};
+            setWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            setWrite.pNext = nullptr;
+
+            //we are going to write into binding number 0
+            setWrite.dstBinding = 0;
+            //of the global descriptor
+            setWrite.dstSet = mFrames[i].globalDescriptor;
+
+            setWrite.descriptorCount = 1;
+            //and the type is uniform buffer
+            setWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            setWrite.pBufferInfo = &bufferInfo;
+
+            vkUpdateDescriptorSets(mDevice, 1, &setWrite, 0, nullptr);
+        }
+
+        // add buffers to deletion queues
+        mMainDeletionQueue.push_function([&]() {
+            vkDestroyDescriptorSetLayout(mDevice, mGlobalSetLayout, nullptr);
+            vkDestroyDescriptorPool(mDevice, mDescriptorPool, nullptr);
+
+            for (int i = 0; i < cFrameOverlap; i++) {
+                vmaDestroyBuffer(mAllocator, mFrames[i].cameraBuffer.buffer, mFrames[i].cameraBuffer.allocation);
+            }
+        });
+    }
+
     void Engine::loadMeshes() {
         Mesh triangleMesh;
         Mesh monkeyMesh;
@@ -576,9 +673,9 @@ namespace cw::graphics {
         triangleMesh.mVertices[2].position = { 0.f,-1.f, 0.0f };
 
         //vertex colors all green
-        triangleMesh.mVertices[0].color = { 0.f, 1.f, 0.0f }; //pure green
-        triangleMesh.mVertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
-        triangleMesh.mVertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
+        triangleMesh.mVertices[1].color = { 1.f, 1.f, 0.0f }; //pure green
+        triangleMesh.mVertices[2].color = { 1.f, 1.f, 0.0f }; //pure green
+        triangleMesh.mVertices[0].color = { 1.f, 1.f, 0.0f }; //pure green
 
         monkeyMesh.loadFromObj("res/meshes/monkey_smooth.obj");
 
@@ -590,37 +687,20 @@ namespace cw::graphics {
     }
 
     void Engine::uploadMesh(Mesh &mesh) {
-        //allocate vertex buffer
-        VkBufferCreateInfo bufferInfo = {};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        //this is the total size, in bytes, of the buffer we are allocating
-        bufferInfo.size = mesh.mVertices.size() * sizeof(Vertex);
-        //this buffer is going to be used as a Vertex Buffer
-        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-
-
-        //let the VMA library know that this data should be writeable by CPU, but also readable by GPU
-        VmaAllocationCreateInfo vmaAllocInfo = {};
-        vmaAllocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-
-        //allocate the buffer
-        VK_CHECK(vmaCreateBuffer(mAllocator, &bufferInfo, &vmaAllocInfo,
-                                 &mesh.mVertexBuffer.mBuffer,
-                                 &mesh.mVertexBuffer.mAllocation,
-                                 nullptr));
+        mesh.mVertexBuffer = createBuffer(mesh.mVertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
         //add the destruction of triangle mesh buffer to the deletion queue
         mMainDeletionQueue.push_function([=]() {
-            vmaDestroyBuffer(mAllocator, mesh.mVertexBuffer.mBuffer, mesh.mVertexBuffer.mAllocation);
+            vmaDestroyBuffer(mAllocator, mesh.mVertexBuffer.buffer, mesh.mVertexBuffer.allocation);
         });
 
         //copy vertex data
         void* data;
-        vmaMapMemory(mAllocator, mesh.mVertexBuffer.mAllocation, &data);
+        vmaMapMemory(mAllocator, mesh.mVertexBuffer.allocation, &data);
 
         memcpy(data, mesh.mVertices.data(), mesh.mVertices.size() * sizeof(Vertex));
 
-        vmaUnmapMemory(mAllocator, mesh.mVertexBuffer.mAllocation);
+        vmaUnmapMemory(mAllocator, mesh.mVertexBuffer.allocation);
     }
 
     bool Engine::loadShaderModule(const char *filePath, VkShaderModule *outShaderModule) const {
@@ -704,6 +784,18 @@ namespace cw::graphics {
         glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
         projection[1][1] *= -1;
 
+        //fill a GPU camera data struct
+        GPUCameraData camData{};
+        camData.proj = projection;
+        camData.view = view;
+        camData.viewProj = projection * view;
+
+        //and copy it to the buffer
+        void* data;
+        vmaMapMemory(mAllocator, getCurrentFrame().cameraBuffer.allocation, &data);
+        memcpy(data, &camData, sizeof(GPUCameraData));
+        vmaUnmapMemory(mAllocator, getCurrentFrame().cameraBuffer.allocation);
+
         std::shared_ptr<Mesh> lastMesh = nullptr;
         std::shared_ptr<Material> lastMaterial = nullptr;
         for (auto & object : mRenderables)
@@ -712,14 +804,12 @@ namespace cw::graphics {
             if (object.material != lastMaterial) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
                 lastMaterial = object.material;
+                //bind the descriptor set when changing pipeline
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 0, 1, &getCurrentFrame().globalDescriptor, 0, nullptr);
             }
 
-            glm::mat4 model = object.transformMatrix;
-            //final render matrix, that we are calculating on the cpu
-            glm::mat4 mesh_matrix = projection * view * model;
-
             MeshPushConstants constants{};
-            constants.mRenderMatrix = mesh_matrix;
+            constants.renderMatrix = object.transformMatrix;
 
             //upload the mesh to the GPU via push constants
             vkCmdPushConstants(cmd, object.material->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
@@ -728,7 +818,7 @@ namespace cw::graphics {
             if (object.mesh != lastMesh) {
                 //bind the mesh vertex buffer with offset 0
                 VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(cmd, 0, 1, &object.mesh->mVertexBuffer.mBuffer, &offset);
+                vkCmdBindVertexBuffers(cmd, 0, 1, &object.mesh->mVertexBuffer.buffer, &offset);
                 lastMesh = object.mesh;
             }
             //we can now draw
@@ -780,11 +870,10 @@ namespace cw::graphics {
 
         //allocate the buffer
         VK_CHECK(vmaCreateBuffer(mAllocator, &bufferInfo, &vmaAllocInfo,
-                                 &newBuffer.mBuffer,
-                                 &newBuffer.mAllocation,
+                                 &newBuffer.buffer,
+                                 &newBuffer.allocation,
                                  nullptr));
 
         return newBuffer;
     }
-
 }
