@@ -99,14 +99,6 @@ add_custom_target(
         DEPENDS ${SPIRV_BINARY_FILES}
 )
 
-# Copying resources to the build folder
-if(EXISTS ${PROJECT_SOURCE_DIR}/res/)
-    message(STATUS "Copying resources...")
-    file(COPY ${PROJECT_SOURCE_DIR}/res/ DESTINATION ${CMAKE_BINARY_DIR}/res/)
-endif()
-
-
-
 # Compile and link all source files in the "src" directory
 file(GLOB_RECURSE SRC_FILES "./scr/*.h" "./scr/*.cpp")
 add_executable(clockwork ${SRC_FILES} ${SPIRV_BINARY_FILES})

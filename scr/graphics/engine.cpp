@@ -48,6 +48,8 @@ namespace cw::graphics {
 
             mMainDeletionQueue.flush();
 
+            vmaDestroyBuffer(mAllocator, mSceneParameterBuffer.buffer, mSceneParameterBuffer.allocation);
+
             vmaDestroyAllocator(mAllocator);
             vkDestroyDevice(mDevice, nullptr);
             vkDestroySurfaceKHR(mInstance, mSurface, nullptr);
@@ -208,7 +210,12 @@ namespace cw::graphics {
         //create the final Vulkan device
         vkb::DeviceBuilder deviceBuilder{physicalDevice};
 
-        vkb::Device vkbDevice = deviceBuilder.build().value();
+        VkPhysicalDeviceShaderDrawParametersFeatures shadowDrawParametersFeature = {};
+        shadowDrawParametersFeature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+        shadowDrawParametersFeature.pNext = nullptr;
+        shadowDrawParametersFeature.shaderDrawParameters = VK_TRUE;
+
+        vkb::Device vkbDevice = deviceBuilder.add_pNext(&shadowDrawParametersFeature).build().value();
 
         // Get the VkDevice handle used in the rest of a Vulkan application
         mDevice = vkbDevice.device;
@@ -500,14 +507,14 @@ namespace cw::graphics {
 
         //compile mesh vertex shader
         VkShaderModule meshVertShader;
-        if (!loadShaderModule("res/shaders/tri_mesh.vert.spv", &meshVertShader)) {
+        if (!loadShaderModule("../res/shaders/tri_mesh.vert.spv", &meshVertShader)) {
             std::cout << "Error when building the triangle vertex shader module" << std::endl;
         }
         else {
             std::cout << "Mesh Triangle vertex shader successfully loaded" << std::endl;
         }
         VkShaderModule triangleFragShader;
-        if (!loadShaderModule("res/shaders/triangle.frag.spv", &triangleFragShader))
+        if (!loadShaderModule("../res/shaders/default_lit.frag.spv", &triangleFragShader))
         {
             std::cout << "Error when building the triangle fragment shader module" << std::endl;
         }
@@ -539,9 +546,11 @@ namespace cw::graphics {
         meshPipelineLayoutInfo.pPushConstantRanges = &pushConstant;
         meshPipelineLayoutInfo.pushConstantRangeCount = 1;
 
+        VkDescriptorSetLayout setLayouts[] = { mGlobalSetLayout, mObjectSetLayout };
+
         //hook the global set layout
-        meshPipelineLayoutInfo.setLayoutCount = 1;
-        meshPipelineLayoutInfo.pSetLayouts = &mGlobalSetLayout;
+        meshPipelineLayoutInfo.setLayoutCount = 2;
+        meshPipelineLayoutInfo.pSetLayouts = setLayouts;
 
         VkPipelineLayout meshPipelineLayout;
         VkPipeline meshPipeline;
@@ -567,34 +576,41 @@ namespace cw::graphics {
 
 
     void Engine::initDescriptors() {
-        //information about the binding.
-        VkDescriptorSetLayoutBinding camBufferBinding = {};
-        camBufferBinding.binding = 0;
-        camBufferBinding.descriptorCount = 1;
-        // it's a uniform buffer binding
-        camBufferBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        //binding for camera data at 0
+        VkDescriptorSetLayoutBinding cameraBind = init::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,VK_SHADER_STAGE_VERTEX_BIT,0);
 
-        // we use it from the vertex shader
-        camBufferBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        //binding for scene data at 1
+        VkDescriptorSetLayoutBinding sceneBind = init::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1);
+
+        VkDescriptorSetLayoutBinding bindings[] = { cameraBind,sceneBind };
 
 
         VkDescriptorSetLayoutCreateInfo setInfo = {};
-        setInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        setInfo.pNext = nullptr;
-
-        //we are going to have 1 binding
-        setInfo.bindingCount = 1;
-        //no flags
+        setInfo.bindingCount = 2;
         setInfo.flags = 0;
-        //point to the camera buffer binding
-        setInfo.pBindings = &camBufferBinding;
+        setInfo.pNext = nullptr;
+        setInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        setInfo.pBindings = bindings;
 
         vkCreateDescriptorSetLayout(mDevice, &setInfo, nullptr, &mGlobalSetLayout);
+
+        VkDescriptorSetLayoutBinding objectBind = init::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
+
+        VkDescriptorSetLayoutCreateInfo set2info = {};
+        set2info.bindingCount = 1;
+        set2info.flags = 0;
+        set2info.pNext = nullptr;
+        set2info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        set2info.pBindings = &objectBind;
+
+        vkCreateDescriptorSetLayout(mDevice, &set2info, nullptr, &mObjectSetLayout);
 
         //create a descriptor pool that will hold 10 uniform buffers
         std::vector<VkDescriptorPoolSize> sizes =
         {
-                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10 }
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10 },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10 }
         };
 
         VkDescriptorPoolCreateInfo poolInfo = {};
@@ -606,57 +622,75 @@ namespace cw::graphics {
 
         vkCreateDescriptorPool(mDevice, &poolInfo, nullptr, &mDescriptorPool);
 
+        const size_t sceneParamBufferSize = cFrameOverlap * padUniformBufferSize(sizeof(GPUSceneData));
+        mSceneParameterBuffer = createBuffer(sceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
         for (int i = 0; i < cFrameOverlap; i++)
         {
+            const int maxObjects = 10000;
+            mFrames[i].objectBuffer = createBuffer(sizeof(GPUObjectData) * maxObjects, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
             mFrames[i].cameraBuffer = createBuffer(sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
             //allocate one descriptor set for each frame
-            VkDescriptorSetAllocateInfo allocInfo ={};
-            allocInfo.pNext = nullptr;
-            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            VkDescriptorSetAllocateInfo globalSetAllocInfo ={};
+            globalSetAllocInfo.pNext = nullptr;
+            globalSetAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
             //using the pool we just set
-            allocInfo.descriptorPool = mDescriptorPool;
+            globalSetAllocInfo.descriptorPool = mDescriptorPool;
             //only 1 descriptor
-            allocInfo.descriptorSetCount = 1;
+            globalSetAllocInfo.descriptorSetCount = 1;
             //using the global data layout
-            allocInfo.pSetLayouts = &mGlobalSetLayout;
+            globalSetAllocInfo.pSetLayouts = &mGlobalSetLayout;
 
-            vkAllocateDescriptorSets(mDevice, &allocInfo, &mFrames[i].globalDescriptor);
+            vkAllocateDescriptorSets(mDevice, &globalSetAllocInfo, &mFrames[i].globalDescriptor);
 
-            //information about the buffer we want to point at in the descriptor
-            VkDescriptorBufferInfo bufferInfo;
-            //it will be the camera buffer
-            bufferInfo.buffer = mFrames[i].cameraBuffer.buffer;
-            //at 0 offset
-            bufferInfo.offset = 0;
-            //of the size of a camera data struct
-            bufferInfo.range = sizeof(GPUCameraData);
+            //allocate the descriptor set that will point to object buffer
+            VkDescriptorSetAllocateInfo objectSetAlloc = {};
+            objectSetAlloc.pNext = nullptr;
+            objectSetAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            objectSetAlloc.descriptorPool = mDescriptorPool;
+            objectSetAlloc.descriptorSetCount = 1;
+            objectSetAlloc.pSetLayouts = &mObjectSetLayout;
 
-            VkWriteDescriptorSet setWrite = {};
-            setWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            setWrite.pNext = nullptr;
+            vkAllocateDescriptorSets(mDevice, &objectSetAlloc, &mFrames[i].objectDescriptor);
 
-            //we are going to write into binding number 0
-            setWrite.dstBinding = 0;
-            //of the global descriptor
-            setWrite.dstSet = mFrames[i].globalDescriptor;
+            VkDescriptorBufferInfo cameraInfo;
+            cameraInfo.buffer = mFrames[i].cameraBuffer.buffer;
+            cameraInfo.offset = 0;
+            cameraInfo.range = sizeof(GPUCameraData);
 
-            setWrite.descriptorCount = 1;
-            //and the type is uniform buffer
-            setWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            setWrite.pBufferInfo = &bufferInfo;
+            VkDescriptorBufferInfo sceneInfo;
+            sceneInfo.buffer = mSceneParameterBuffer.buffer;
+            sceneInfo.offset = 0;
+            sceneInfo.range = sizeof(GPUSceneData);
 
-            vkUpdateDescriptorSets(mDevice, 1, &setWrite, 0, nullptr);
+            VkDescriptorBufferInfo objectInfo;
+            objectInfo.buffer = mFrames[i].objectBuffer.buffer;
+            objectInfo.offset = 0;
+            objectInfo.range = sizeof(GPUObjectData) * maxObjects;
+
+            VkWriteDescriptorSet cameraWrite = init::writeDescriptorBuffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, mFrames[i].globalDescriptor,&cameraInfo,0);
+
+            VkWriteDescriptorSet sceneWrite = init::writeDescriptorBuffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, mFrames[i].globalDescriptor, &sceneInfo, 1);
+
+            VkWriteDescriptorSet objectWrite = init::writeDescriptorBuffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, mFrames[i].objectDescriptor, &objectInfo, 0);
+
+            VkWriteDescriptorSet setWrites[] = { cameraWrite,sceneWrite, objectWrite };
+
+            vkUpdateDescriptorSets(mDevice, 3, setWrites, 0, nullptr);
         }
 
         // add buffers to deletion queues
         mMainDeletionQueue.push_function([&]() {
             vkDestroyDescriptorSetLayout(mDevice, mGlobalSetLayout, nullptr);
+            vkDestroyDescriptorSetLayout(mDevice, mObjectSetLayout, nullptr);
             vkDestroyDescriptorPool(mDevice, mDescriptorPool, nullptr);
 
             for (int i = 0; i < cFrameOverlap; i++) {
                 vmaDestroyBuffer(mAllocator, mFrames[i].cameraBuffer.buffer, mFrames[i].cameraBuffer.allocation);
+                vmaDestroyBuffer(mAllocator, mFrames[i].objectBuffer.buffer, mFrames[i].objectBuffer.allocation);
             }
+
         });
     }
 
@@ -677,7 +711,7 @@ namespace cw::graphics {
         triangleMesh.mVertices[2].color = { 1.f, 1.f, 0.0f }; //pure green
         triangleMesh.mVertices[0].color = { 1.f, 1.f, 0.0f }; //pure green
 
-        monkeyMesh.loadFromObj("res/meshes/monkey_smooth.obj");
+        monkeyMesh.loadFromObj("../res/meshes/monkey_smooth.obj");
 
         uploadMesh(triangleMesh);
         uploadMesh(monkeyMesh);
@@ -796,16 +830,40 @@ namespace cw::graphics {
         memcpy(data, &camData, sizeof(GPUCameraData));
         vmaUnmapMemory(mAllocator, getCurrentFrame().cameraBuffer.allocation);
 
+        float framed = (mFrameNumber / 120.f);
+        mSceneParameters.ambientColor = { sin(framed),0,cos(framed),1 };
+        char* sceneData;
+        vmaMapMemory(mAllocator, mSceneParameterBuffer.allocation , (void**)&sceneData);
+        int frameIndex = mFrameNumber % cFrameOverlap;
+        sceneData += padUniformBufferSize(sizeof(GPUSceneData)) * frameIndex;
+        memcpy(sceneData, &mSceneParameters, sizeof(GPUSceneData));
+        vmaUnmapMemory(mAllocator, mSceneParameterBuffer.allocation);
+
+        void* objectData;
+        vmaMapMemory(mAllocator, getCurrentFrame().objectBuffer.allocation, &objectData);
+        auto* objectSSBO = (GPUObjectData*)objectData;
+        for (int i = 0; i < mRenderables.size(); i++)
+        {
+            RenderObject& object = mRenderables[i];
+            objectSSBO[i].modelMatrix = object.transformMatrix;
+        }
+        vmaUnmapMemory(mAllocator, getCurrentFrame().objectBuffer.allocation);
+
         std::shared_ptr<Mesh> lastMesh = nullptr;
         std::shared_ptr<Material> lastMaterial = nullptr;
+        int count = 0;
         for (auto & object : mRenderables)
         {
             //only bind the pipeline if it doesn't match with the already bound one
             if (object.material != lastMaterial) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
                 lastMaterial = object.material;
+                //offset for our scene buffer
+                uint32_t uniformOffset = padUniformBufferSize(sizeof(GPUSceneData)) * frameIndex;
                 //bind the descriptor set when changing pipeline
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 0, 1, &getCurrentFrame().globalDescriptor, 0, nullptr);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 0, 1, &getCurrentFrame().globalDescriptor, 1, &uniformOffset);
+                //object data descriptor
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 1, 1, &getCurrentFrame().objectDescriptor, 0, nullptr);
             }
 
             MeshPushConstants constants{};
@@ -822,7 +880,8 @@ namespace cw::graphics {
                 lastMesh = object.mesh;
             }
             //we can now draw
-            vkCmdDraw(cmd, object.mesh->mVertices.size(), 1, 0, 0);
+            vkCmdDraw(cmd, object.mesh->mVertices.size(), 1, 0, count);
+            count++;
         }
     }
 
@@ -875,5 +934,16 @@ namespace cw::graphics {
                                  nullptr));
 
         return newBuffer;
+    }
+
+    size_t Engine::padUniformBufferSize(size_t originalSize)
+    {
+        // Calculate required alignment based on minimum device offset alignment
+        size_t minUboAlignment = mGpuProperties.limits.minUniformBufferOffsetAlignment;
+        size_t alignedSize = originalSize;
+        if (minUboAlignment > 0) {
+            alignedSize = (alignedSize + minUboAlignment - 1) & ~(minUboAlignment - 1);
+        }
+        return alignedSize;
     }
 }

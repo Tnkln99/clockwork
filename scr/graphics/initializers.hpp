@@ -4,39 +4,46 @@
 #include "types.hpp"
 
 namespace cw::graphics::init {
-    VkCommandBufferAllocateInfo commandBufferAllocateInfo(VkCommandPool pool, uint32_t count = 1, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
 
-    VkCommandPoolCreateInfo commandPoolCreateInfo(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags flags = 0);
+    VkCommandPoolCreateInfo commandPoolCreateInfo(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags flags = 0) ;
 
-    VkFenceCreateInfo fenceCreateInfo(VkFenceCreateFlags flags = 0);
+    VkCommandBufferAllocateInfo commandBufferAllocateInfo(VkCommandPool pool, uint32_t count = 1, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY) ;
 
-    VkSemaphoreCreateInfo semaphoreCreateInfo(VkSemaphoreCreateFlags flags = 0);
+    VkPipelineShaderStageCreateInfo pipelineShaderStageCreateInfo(VkShaderStageFlagBits stage, VkShaderModule shaderModule) ;
 
-    VkSubmitInfo submitInfo(VkCommandBuffer* cmd);
+    VkPipelineVertexInputStateCreateInfo vertexInputStateCreateInfo() ;
 
-    VkPresentInfoKHR presentInfo();
+    VkPipelineInputAssemblyStateCreateInfo inputAssemblyStateCreateInfo(VkPrimitiveTopology topology) ;
 
-    VkRenderPassBeginInfo renderPassBeginInfo(VkRenderPass renderPass, VkExtent2D windowExtent, VkFramebuffer framebuffer);
+    VkPipelineRasterizationStateCreateInfo rasterizationStateCreateInfo(VkPolygonMode polygonMode) ;
 
-    VkPipelineShaderStageCreateInfo pipelineShaderStageCreateInfo(VkShaderStageFlagBits stage, VkShaderModule shaderModule);
+    VkPipelineMultisampleStateCreateInfo multisampleStateCreateInfo() ;
 
-    VkPipelineVertexInputStateCreateInfo vertexInputStateCreateInfo();
+    VkPipelineColorBlendAttachmentState colorBlendAttachmentState() ;
 
-    VkPipelineInputAssemblyStateCreateInfo inputAssemblyStateCreateInfo(VkPrimitiveTopology topology);
+    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo() ;
 
-    VkPipelineRasterizationStateCreateInfo rasterizationStateCreateInfo(VkPolygonMode polygonMode);
+    VkFenceCreateInfo fenceCreateInfo(VkFenceCreateFlags flags = 0) ;
 
-    VkPipelineMultisampleStateCreateInfo multisampleStateCreateInfo();
+    VkSemaphoreCreateInfo semaphoreCreateInfo(VkSemaphoreCreateFlags flags = 0) ;
 
-    VkPipelineColorBlendAttachmentState colorBlendAttachmentState();
+    VkSubmitInfo submitInfo(VkCommandBuffer *cmd) ;
 
-    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo();
+    VkPresentInfoKHR presentInfo() ;
 
-    VkImageCreateInfo imageCreateInfo(VkFormat format, VkImageUsageFlags usageFlags, VkExtent3D extent);
+    VkRenderPassBeginInfo
+    renderPassBeginInfo(VkRenderPass renderPass, VkExtent2D windowExtent, VkFramebuffer framebuffer) ;
 
-    VkImageViewCreateInfo imageViewCreateInfo(VkFormat format, VkImage image, VkImageAspectFlags aspectFlags);
+    VkImageCreateInfo imageCreateInfo(VkFormat format, VkImageUsageFlags usageFlags, VkExtent3D extent) ;
 
-    VkPipelineDepthStencilStateCreateInfo depthStencilStateCreateInfo(bool bDepthTest, bool bDepthWrite, VkCompareOp compareOp);
+    VkImageViewCreateInfo imageViewCreateInfo(VkFormat format, VkImage image, VkImageAspectFlags aspectFlags) ;
+
+    VkPipelineDepthStencilStateCreateInfo
+    depthStencilStateCreateInfo(bool bDepthTest, bool bDepthWrite, VkCompareOp compareOp) ;
+
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBinding(VkDescriptorType type, VkShaderStageFlags stageFlags, uint32_t binding);
+
+    VkWriteDescriptorSet writeDescriptorBuffer(VkDescriptorType type, VkDescriptorSet dstSet, VkDescriptorBufferInfo* bufferInfo , uint32_t binding);
 }
 
 #endif //CLOCKWORK_INITIALIZERS_HPP
