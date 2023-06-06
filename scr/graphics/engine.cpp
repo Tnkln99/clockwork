@@ -1,4 +1,5 @@
 #include "engine.hpp"
+#include "textures.hpp"
 
 #include <iostream>
 #include <VkBootstrap.h>
@@ -17,7 +18,7 @@
 		VkResult err = x;                                              \
 		if (err)                                                       \
 		{                                                              \
-			std::cout <<"Detected Vulkan error: " << err << std::endl; \
+			std::cout <<"Detected Vulkan error: " << err << "at " << std::to_string(__LINE__) << std::endl; \
 			abort();                                                   \
 		}                                                              \
 	} while (0)
@@ -34,6 +35,7 @@ namespace cw::graphics {
         initDescriptors();
         initPipelines();
 
+        loadImages();
         loadMeshes();
 
         initScenes();
@@ -48,11 +50,9 @@ namespace cw::graphics {
 
             mMainDeletionQueue.flush();
 
-            vmaDestroyBuffer(mAllocator, mSceneParameterBuffer.buffer, mSceneParameterBuffer.allocation);
-
-            vmaDestroyAllocator(mAllocator);
-            vkDestroyDevice(mDevice, nullptr);
             vkDestroySurfaceKHR(mInstance, mSurface, nullptr);
+
+            vkDestroyDevice(mDevice, nullptr);
             vkb::destroy_debug_utils_messenger(mInstance, mDebugMessenger);
             vkDestroyInstance(mInstance, nullptr);
 
@@ -168,6 +168,32 @@ namespace cw::graphics {
         mFrameNumber++;
     }
 
+    void Engine::immediateSubmit(std::function<void(VkCommandBuffer)> &&function) {
+        VkCommandBuffer cmd = mUploadContext.commandBuffer;
+
+        //begin the command buffer recording. We will use this command buffer exactly once before resetting, so we tell vulkan that
+        VkCommandBufferBeginInfo cmdBeginInfo = init::commandBufferBeginInfo(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+        VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+
+        //execute the function
+        function(cmd);
+
+        VK_CHECK(vkEndCommandBuffer(cmd));
+
+        VkSubmitInfo submit = init::submitInfo(&cmd);
+
+        //submit command buffer to the queue and execute it.
+        // _uploadFence will now block until the graphic commands finish execution
+        VK_CHECK(vkQueueSubmit(mGraphicsQueue, 1, &submit, mUploadContext.uploadFence));
+
+        vkWaitForFences(mDevice, 1, &mUploadContext.uploadFence, true, 9999999999);
+        vkResetFences(mDevice, 1, &mUploadContext.uploadFence);
+
+        // reset the command buffers inside the command pool
+        vkResetCommandPool(mDevice, mUploadContext.commandPool, 0);
+    }
+
     void Engine::initWindow() {
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -215,7 +241,9 @@ namespace cw::graphics {
         shadowDrawParametersFeature.pNext = nullptr;
         shadowDrawParametersFeature.shaderDrawParameters = VK_TRUE;
 
-        vkb::Device vkbDevice = deviceBuilder.add_pNext(&shadowDrawParametersFeature).build().value();
+
+        vkb::Device vkbDevice = deviceBuilder.
+                add_pNext(&shadowDrawParametersFeature).build().value();
 
         // Get the VkDevice handle used in the rest of a Vulkan application
         mDevice = vkbDevice.device;
@@ -230,6 +258,10 @@ namespace cw::graphics {
         allocatorInfo.device = mDevice;
         allocatorInfo.instance = mInstance;
         vmaCreateAllocator(&allocatorInfo, &mAllocator);
+
+        mMainDeletionQueue.push_function([&]() {
+            vmaDestroyAllocator(mAllocator);
+        });
 
         mGpuProperties = vkbDevice.physical_device.properties;
         std::cout << "The GPU has a minimum buffer alignment of " << mGpuProperties.limits.minUniformBufferOffsetAlignment << std::endl;
@@ -307,6 +339,20 @@ namespace cw::graphics {
                 vkDestroyCommandPool(mDevice, mFrames[i].commandPool, nullptr);
             });
         }
+
+        VkCommandPoolCreateInfo uploadCommandPoolInfo = init::commandPoolCreateInfo(mGraphicsQueueFamily);
+        //create pool for upload context
+        VK_CHECK(vkCreateCommandPool(mDevice, &uploadCommandPoolInfo, nullptr, &mUploadContext.commandPool));
+
+        mMainDeletionQueue.push_function([=]() {
+            vkDestroyCommandPool(mDevice, mUploadContext.commandPool, nullptr);
+        });
+
+        //allocate the default command buffer that we will use for the instant commands
+        VkCommandBufferAllocateInfo cmdAllocInfo = init::commandBufferAllocateInfo(mUploadContext.commandPool, 1);
+
+        VkCommandBuffer cmd;
+        VK_CHECK(vkAllocateCommandBuffers(mDevice, &cmdAllocInfo, &mUploadContext.commandBuffer));
     }
 
     void Engine::initDefaultRenderpass() {
@@ -460,9 +506,43 @@ namespace cw::graphics {
                 vkDestroySemaphore(mDevice, mFrames[i].renderSemaphore, nullptr);
             });
         }
+
+        VkFenceCreateInfo uploadFenceCreateInfo = init::fenceCreateInfo();
+
+        VK_CHECK(vkCreateFence(mDevice, &uploadFenceCreateInfo, nullptr, &mUploadContext.uploadFence));
+        mMainDeletionQueue.push_function([=]() {
+            vkDestroyFence(mDevice, mUploadContext.uploadFence, nullptr);
+        });
     }
 
     void Engine::initPipelines() {
+        //compile mesh vertex shader
+        VkShaderModule meshVertShader;
+        if (!loadShaderModule("../res/shaders/tri_mesh.vert.spv", &meshVertShader)) {
+            std::cout << "Error when building the triangle vertex shader module" << std::endl;
+        }
+        else {
+            std::cout << "Mesh Triangle vertex shader successfully loaded" << std::endl;
+        }
+        VkShaderModule triangleFragShader;
+        if (!loadShaderModule("../res/shaders/default_lit.frag.spv", &triangleFragShader))
+        {
+            std::cout << "Error when building the triangle fragment shader module" << std::endl;
+        }
+        else
+        {
+            std::cout << "Triangle fragment shader successfully loaded" << std::endl;
+        }
+        VkShaderModule texturedMeshShader;
+        if (!loadShaderModule("../res/shaders/textured_lit.frag.spv", &texturedMeshShader))
+        {
+            std::cout << "Error when building the textured mesh shader" << std::endl;
+        }
+        else
+        {
+            std::cout << "Texture mesh shader successfully loaded" << std::endl;
+        }
+
         //build the stage-create-info for both vertex and fragment stages. This lets the pipeline know the shader modules per stage
         Pipeline pipelineBuilder;
 
@@ -505,24 +585,6 @@ namespace cw::graphics {
         pipelineBuilder.mVertexInputInfo.pVertexBindingDescriptions = vertexDescription.mBindings.data();
         pipelineBuilder.mVertexInputInfo.vertexBindingDescriptionCount = vertexDescription.mBindings.size();
 
-        //compile mesh vertex shader
-        VkShaderModule meshVertShader;
-        if (!loadShaderModule("../res/shaders/tri_mesh.vert.spv", &meshVertShader)) {
-            std::cout << "Error when building the triangle vertex shader module" << std::endl;
-        }
-        else {
-            std::cout << "Mesh Triangle vertex shader successfully loaded" << std::endl;
-        }
-        VkShaderModule triangleFragShader;
-        if (!loadShaderModule("../res/shaders/default_lit.frag.spv", &triangleFragShader))
-        {
-            std::cout << "Error when building the triangle fragment shader module" << std::endl;
-        }
-        else
-        {
-            std::cout << "Triangle fragment shader successfully loaded" << std::endl;
-        }
-
         //add the other shaders
         pipelineBuilder.mShaderStages.push_back(
                 init::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, meshVertShader));
@@ -561,21 +623,68 @@ namespace cw::graphics {
         meshPipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
         createMaterial(meshPipeline, meshPipelineLayout, "defaultmesh");
 
+        //create pipeline layout for the textured mesh, which has 3 descriptor sets
+        //we start from  the normal mesh layout
+        VkPipelineLayoutCreateInfo textured_pipeline_layout_info = meshPipelineLayoutInfo;
+
+        VkDescriptorSetLayout texturedSetLayouts[] = { mGlobalSetLayout, mObjectSetLayout, mSingleTextureSetLayout };
+
+        textured_pipeline_layout_info.setLayoutCount = 3;
+        textured_pipeline_layout_info.pSetLayouts = texturedSetLayouts;
+
+        VkPipelineLayout texturedPipeLayout;
+        VK_CHECK(vkCreatePipelineLayout(mDevice, &textured_pipeline_layout_info, nullptr, &texturedPipeLayout));
+
+        pipelineBuilder.mShaderStages.clear();
+        pipelineBuilder.mShaderStages.push_back(
+                init::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, meshVertShader));
+
+        pipelineBuilder.mShaderStages.push_back(
+                init::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, texturedMeshShader));
+
+        //connect the new pipeline layout to the pipeline builder
+        pipelineBuilder.mPipelineLayout = texturedPipeLayout;
+        VkPipeline texPipeline = pipelineBuilder.buildPipeline(mDevice, mRenderpass);
+        createMaterial(texPipeline, texturedPipeLayout, "texturedmesh");
+
+
         //destroy all shader modules, outside the queue
         vkDestroyShaderModule(mDevice, meshVertShader, nullptr);
         vkDestroyShaderModule(mDevice, triangleFragShader, nullptr);
+        vkDestroyShaderModule(mDevice, texturedMeshShader, nullptr);
 
         mMainDeletionQueue.push_function([=]() {
-            //destroy the 1 pipelines we have created
+            //destroy pipelines we have created
             vkDestroyPipeline(mDevice, meshPipeline, nullptr);
+            vkDestroyPipeline(mDevice, texPipeline, nullptr);
 
             //destroy the pipeline layout that they use
             vkDestroyPipelineLayout(mDevice, meshPipelineLayout, nullptr);
+            vkDestroyPipelineLayout(mDevice, texturedPipeLayout, nullptr);
         });
     }
 
 
     void Engine::initDescriptors() {
+        //create a descriptor pool that will hold 10 uniform buffers
+        std::vector<VkDescriptorPoolSize> sizes =
+                {
+                        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10 },
+                        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10 },
+                        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10 },
+                        //add combined-image-sampler descriptor types to the pool
+                        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10 }
+                };
+
+        VkDescriptorPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.flags = 0;
+        poolInfo.maxSets = 10;
+        poolInfo.poolSizeCount = (uint32_t)sizes.size();
+        poolInfo.pPoolSizes = sizes.data();
+
+        vkCreateDescriptorPool(mDevice, &poolInfo, nullptr, &mDescriptorPool);
+
         //binding for camera data at 0
         VkDescriptorSetLayoutBinding cameraBind = init::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,VK_SHADER_STAGE_VERTEX_BIT,0);
 
@@ -605,22 +714,17 @@ namespace cw::graphics {
 
         vkCreateDescriptorSetLayout(mDevice, &set2info, nullptr, &mObjectSetLayout);
 
-        //create a descriptor pool that will hold 10 uniform buffers
-        std::vector<VkDescriptorPoolSize> sizes =
-        {
-                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10 },
-                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10 },
-                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10 }
-        };
+        //another set, one that holds a single texture
+        VkDescriptorSetLayoutBinding textureBind = init::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
 
-        VkDescriptorPoolCreateInfo poolInfo = {};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.flags = 0;
-        poolInfo.maxSets = 10;
-        poolInfo.poolSizeCount = (uint32_t)sizes.size();
-        poolInfo.pPoolSizes = sizes.data();
+        VkDescriptorSetLayoutCreateInfo set3info = {};
+        set3info.bindingCount = 1;
+        set3info.flags = 0;
+        set3info.pNext = nullptr;
+        set3info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        set3info.pBindings = &textureBind;
 
-        vkCreateDescriptorPool(mDevice, &poolInfo, nullptr, &mDescriptorPool);
+        vkCreateDescriptorSetLayout(mDevice, &set3info, nullptr, &mSingleTextureSetLayout);
 
         const size_t sceneParamBufferSize = cFrameOverlap * padUniformBufferSize(sizeof(GPUSceneData));
         mSceneParameterBuffer = createBuffer(sceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
@@ -682,11 +786,16 @@ namespace cw::graphics {
 
         // add buffers to deletion queues
         mMainDeletionQueue.push_function([&]() {
-            vkDestroyDescriptorSetLayout(mDevice, mGlobalSetLayout, nullptr);
+            vmaDestroyBuffer(mAllocator, mSceneParameterBuffer.buffer, mSceneParameterBuffer.allocation);
+
             vkDestroyDescriptorSetLayout(mDevice, mObjectSetLayout, nullptr);
+            vkDestroyDescriptorSetLayout(mDevice, mGlobalSetLayout, nullptr);
+            vkDestroyDescriptorSetLayout(mDevice, mSingleTextureSetLayout, nullptr);
+
             vkDestroyDescriptorPool(mDevice, mDescriptorPool, nullptr);
 
-            for (int i = 0; i < cFrameOverlap; i++) {
+            for (int i = 0; i < cFrameOverlap; i++)
+            {
                 vmaDestroyBuffer(mAllocator, mFrames[i].cameraBuffer.buffer, mFrames[i].cameraBuffer.allocation);
                 vmaDestroyBuffer(mAllocator, mFrames[i].objectBuffer.buffer, mFrames[i].objectBuffer.allocation);
             }
@@ -695,8 +804,9 @@ namespace cw::graphics {
     }
 
     void Engine::loadMeshes() {
-        Mesh triangleMesh;
-        Mesh monkeyMesh;
+        Mesh triangleMesh{};
+        Mesh monkeyMesh{};
+        Mesh lostEmpire{};
 
         //make the array 3 vertices long
         triangleMesh.mVertices.resize(3);
@@ -712,29 +822,77 @@ namespace cw::graphics {
         triangleMesh.mVertices[0].color = { 1.f, 1.f, 0.0f }; //pure green
 
         monkeyMesh.loadFromObj("../res/meshes/monkey_smooth.obj");
+        lostEmpire.loadFromObj("../res/meshes/lost_empire.obj");
 
         uploadMesh(triangleMesh);
         uploadMesh(monkeyMesh);
+        uploadMesh(lostEmpire);
 
         mMeshes["monkey"] = monkeyMesh;
         mMeshes["triangle"] = triangleMesh;
+        mMeshes["empire"] = lostEmpire;
     }
 
     void Engine::uploadMesh(Mesh &mesh) {
-        mesh.mVertexBuffer = createBuffer(mesh.mVertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        const size_t bufferSize= mesh.mVertices.size() * sizeof(Vertex);
+        //allocate staging buffer
+        VkBufferCreateInfo stagingBufferInfo = {};
+        stagingBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        stagingBufferInfo.pNext = nullptr;
 
-        //add the destruction of triangle mesh buffer to the deletion queue
+        stagingBufferInfo.size = bufferSize;
+        stagingBufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+        //let the VMA library know that this data should be on CPU RAM
+        VmaAllocationCreateInfo vmaallocInfo = {};
+        vmaallocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+
+        AllocatedBuffer stagingBuffer;
+
+        //allocate the buffer
+        VK_CHECK(vmaCreateBuffer(mAllocator, &stagingBufferInfo, &vmaallocInfo,
+                                 &stagingBuffer.buffer,
+                                 &stagingBuffer.allocation,
+                                 nullptr));
+
+        //copy vertex data
+        void* data;
+        vmaMapMemory(mAllocator, stagingBuffer.allocation, &data);
+        memcpy(data, mesh.mVertices.data(), mesh.mVertices.size() * sizeof(Vertex));
+        vmaUnmapMemory(mAllocator, stagingBuffer.allocation);
+
+        //allocate vertex buffer
+        VkBufferCreateInfo vertexBufferInfo = {};
+        vertexBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        vertexBufferInfo.pNext = nullptr;
+        //this is the total size, in bytes, of the buffer we are allocating
+        vertexBufferInfo.size = bufferSize;
+        //this buffer is going to be used as a Vertex Buffer
+        vertexBufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+        //let the VMA library know that this data should be GPU native
+        vmaallocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+
+        //allocate the buffer
+        VK_CHECK(vmaCreateBuffer(mAllocator, &vertexBufferInfo, &vmaallocInfo,
+                                 &mesh.mVertexBuffer.buffer,
+                                 &mesh.mVertexBuffer.allocation,
+                                 nullptr));
+
+        immediateSubmit([=](VkCommandBuffer cmd) {
+            VkBufferCopy copy;
+            copy.dstOffset = 0;
+            copy.srcOffset = 0;
+            copy.size = bufferSize;
+            vkCmdCopyBuffer(cmd, stagingBuffer.buffer, mesh.mVertexBuffer.buffer, 1, &copy);
+        });
+
+        //add the destruction of mesh buffer to the deletion queue
         mMainDeletionQueue.push_function([=]() {
             vmaDestroyBuffer(mAllocator, mesh.mVertexBuffer.buffer, mesh.mVertexBuffer.allocation);
         });
 
-        //copy vertex data
-        void* data;
-        vmaMapMemory(mAllocator, mesh.mVertexBuffer.allocation, &data);
-
-        memcpy(data, mesh.mVertices.data(), mesh.mVertices.size() * sizeof(Vertex));
-
-        vmaUnmapMemory(mAllocator, mesh.mVertexBuffer.allocation);
+        vmaDestroyBuffer(mAllocator, stagingBuffer.buffer, stagingBuffer.allocation);
     }
 
     bool Engine::loadShaderModule(const char *filePath, VkShaderModule *outShaderModule) const {
@@ -779,32 +937,32 @@ namespace cw::graphics {
         return true;
     }
 
-    std::shared_ptr<Material> Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout, const std::string &name) {
+    Material* Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout, const std::string &name) {
         Material mat{};
         mat.pipeline = pipeline;
         mat.pipelineLayout = layout;
         mMaterials[name] = mat;
-        return std::make_shared<Material>(mMaterials[name]);
+        return &mMaterials[name];
     }
 
-    std::shared_ptr<Material> Engine::getMaterial(const std::string &name) {
+    Material* Engine::getMaterial(const std::string &name) {
         //search for the object, and return nullptr if not found
         auto it = mMaterials.find(name);
         if (it == mMaterials.end()) {
             return nullptr;
         }
         else {
-            return std::make_shared<Material>((*it).second);
+            return &(*it).second;
         }
     }
 
-    std::shared_ptr<Mesh> Engine::getMesh(const std::string &name) {
+    Mesh* Engine::getMesh(const std::string &name) {
         auto it = mMeshes.find(name);
         if (it == mMeshes.end()) {
             return nullptr;
         }
         else {
-            return std::make_shared<Mesh>((*it).second);
+            return &(*it).second;
         }
     }
 
@@ -849,8 +1007,8 @@ namespace cw::graphics {
         }
         vmaUnmapMemory(mAllocator, getCurrentFrame().objectBuffer.allocation);
 
-        std::shared_ptr<Mesh> lastMesh = nullptr;
-        std::shared_ptr<Material> lastMaterial = nullptr;
+        Mesh* lastMesh = nullptr;
+        Material* lastMaterial = nullptr;
         int count = 0;
         for (auto & object : mRenderables)
         {
@@ -864,6 +1022,9 @@ namespace cw::graphics {
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 0, 1, &getCurrentFrame().globalDescriptor, 1, &uniformOffset);
                 //object data descriptor
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 1, 1, &getCurrentFrame().objectDescriptor, 0, nullptr);
+                if(object.material->textureSet != VK_NULL_HANDLE){
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 2, 1, &object.material->textureSet, 0, nullptr);
+                }
             }
 
             MeshPushConstants constants{};
@@ -906,6 +1067,42 @@ namespace cw::graphics {
                 mRenderables.push_back(tri);
             }
         }
+
+        RenderObject map{};
+        map.mesh = getMesh("empire");
+        map.material = getMaterial("texturedmesh");
+        map.transformMatrix = glm::translate(glm::vec3{ 5,-10,0 });
+
+        mRenderables.push_back(map);
+
+        auto texturedMat=	getMaterial("texturedmesh");
+
+        VkDescriptorSetAllocateInfo allocInfo = {};
+        allocInfo.pNext = nullptr;
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = mDescriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &mSingleTextureSetLayout;
+
+        vkAllocateDescriptorSets(mDevice, &allocInfo, &texturedMat->textureSet);
+
+        VkSamplerCreateInfo samplerInfo = init::samplerCreateInfo(VK_FILTER_NEAREST);
+
+        VkSampler blockySampler;
+        vkCreateSampler(mDevice, &samplerInfo, nullptr, &blockySampler);
+
+        mMainDeletionQueue.push_function([=]() {
+            vkDestroySampler(mDevice, blockySampler, nullptr);
+        });
+
+        VkDescriptorImageInfo imageBufferInfo;
+        imageBufferInfo.sampler = blockySampler;
+        imageBufferInfo.imageView = mLoadedTextures["empire_diffuse"].imageView;
+        imageBufferInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet texture1 = init::writeDescriptorImage(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, texturedMat->textureSet, &imageBufferInfo, 0);
+
+        vkUpdateDescriptorSets(mDevice, 1, &texture1, 0, nullptr);
     }
 
     FrameData &Engine::getCurrentFrame() {
@@ -945,5 +1142,24 @@ namespace cw::graphics {
             alignedSize = (alignedSize + minUboAlignment - 1) & ~(minUboAlignment - 1);
         }
         return alignedSize;
+    }
+
+    void Engine::loadImages() {
+        Texture lostEmpire{};
+
+        if(utils::loadImageFromFile(*this, "../res/textures/lost_empire-RGBA.png", lostEmpire.image)){
+            VkImageViewCreateInfo imageinfo = init::imageViewCreateInfo(VK_FORMAT_R8G8B8A8_SRGB, lostEmpire.image.image, VK_IMAGE_ASPECT_COLOR_BIT);
+            vkCreateImageView(mDevice, &imageinfo, nullptr, &lostEmpire.imageView);
+        }
+        else{
+            std::cout << "Error loading lost empire image " << std::endl;
+            exit(1);
+        }
+
+        mMainDeletionQueue.push_function([=]() {
+            vkDestroyImageView(mDevice, lostEmpire.imageView, nullptr);
+        });
+
+        mLoadedTextures["empire_diffuse"] = lostEmpire;
     }
 }

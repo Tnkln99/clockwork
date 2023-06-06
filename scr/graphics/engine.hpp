@@ -12,6 +12,17 @@
 #include <memory>
 
 namespace cw::graphics {
+    struct Texture {
+        AllocatedImage image;
+        VkImageView imageView;
+    };
+
+    struct UploadContext {
+        VkFence uploadFence;
+        VkCommandPool commandPool;
+        VkCommandBuffer commandBuffer;
+    };
+
     struct GPUObjectData{
         glm::mat4 modelMatrix;
     };
@@ -51,13 +62,14 @@ namespace cw::graphics {
     };
 
     struct Material {
+        VkDescriptorSet textureSet{VK_NULL_HANDLE}; //texture defaulted to null
         VkPipeline pipeline;
         VkPipelineLayout pipelineLayout;
     };
 
     struct RenderObject {
-        std::shared_ptr<Mesh> mesh;
-        std::shared_ptr<Material> material;
+        Mesh* mesh;
+        Material* material;
         glm::mat4 transformMatrix;
     };
 
@@ -89,6 +101,10 @@ namespace cw::graphics {
         void draw();
 
         void cleanup();
+
+        void immediateSubmit(std::function<void(VkCommandBuffer cmd)>&& function);
+
+        UploadContext mUploadContext;
 
         VmaAllocator mAllocator; //vma lib allocator
 
@@ -132,25 +148,32 @@ namespace cw::graphics {
 
         VkDescriptorSetLayout mGlobalSetLayout;
         VkDescriptorSetLayout mObjectSetLayout;
+        VkDescriptorSetLayout mSingleTextureSetLayout;
         VkDescriptorPool mDescriptorPool;
 
         GPUSceneData mSceneParameters;
         AllocatedBuffer mSceneParameterBuffer;
 
         //create material and add it to the map
-        std::shared_ptr<Material> createMaterial(VkPipeline pipeline, VkPipelineLayout layout,const std::string& name);
+        Material* createMaterial(VkPipeline pipeline, VkPipelineLayout layout,const std::string& name);
 
         //returns nullptr if it can't be found
-        std::shared_ptr<Material> getMaterial(const std::string& name);
+        Material* getMaterial(const std::string& name);
 
         //returns nullptr if it can't be found
-        std::shared_ptr<Mesh> getMesh(const std::string& name);
+        Mesh* getMesh(const std::string& name);
 
         // getter for the frame we are rendering right now
         FrameData& getCurrentFrame();
 
         //our draw function
         void drawObjects(VkCommandBuffer cmd);
+
+        AllocatedBuffer createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
+
+        std::unordered_map<std::string, Texture> mLoadedTextures;
+
+        void loadImages();
     private:
         void initWindow();
         void initVulkan();
@@ -169,7 +192,6 @@ namespace cw::graphics {
 
         //loads a shader module from a spir-v file. Returns false if it errors
         bool loadShaderModule(const char* filePath, VkShaderModule* outShaderModule) const;
-        AllocatedBuffer createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
         size_t padUniformBufferSize(size_t originalSize);
 
         bool mIsInit {false};

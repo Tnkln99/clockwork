@@ -2,6 +2,7 @@
 #define CLOCKWORK_MESH_HPP
 
 #include "types.hpp"
+#include "glm/vec2.hpp"
 
 #include <vector>
 #include <glm/vec3.hpp>
@@ -18,6 +19,7 @@ namespace cw::graphics{
         glm::vec3 position;
         glm::vec3 normal;
         glm::vec3 color;
+        glm::vec2 uv;
 
         static VertexInputDescription getVertexDescription();
     };

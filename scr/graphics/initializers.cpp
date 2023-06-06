@@ -202,7 +202,7 @@ namespace cw::graphics::init {
     }
 
     VkImageViewCreateInfo imageViewCreateInfo(VkFormat format, VkImage image, VkImageAspectFlags aspectFlags) {
-        //build image-view for the depth image to use for rendering
+        //build a image-view for the depth image to use for rendering
         VkImageViewCreateInfo info = {};
         info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         info.pNext = nullptr;
@@ -259,6 +259,46 @@ namespace cw::graphics::init {
         write.descriptorCount = 1;
         write.descriptorType = type;
         write.pBufferInfo = bufferInfo;
+
+        return write;
+    }
+
+    VkCommandBufferBeginInfo commandBufferBeginInfo(VkCommandBufferUsageFlags flags) {
+        VkCommandBufferBeginInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        info.pNext = nullptr;
+
+        info.pInheritanceInfo = nullptr;
+        info.flags = flags;
+        return info;
+    }
+
+    VkSamplerCreateInfo samplerCreateInfo(VkFilter filters, VkSamplerAddressMode samplerAddressMode) {
+        VkSamplerCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        info.pNext = nullptr;
+
+        info.magFilter = filters;
+        info.minFilter = filters;
+        info.addressModeU = samplerAddressMode;
+        info.addressModeV = samplerAddressMode;
+        info.addressModeW = samplerAddressMode;
+
+        return info;
+    }
+
+    VkWriteDescriptorSet
+    writeDescriptorImage(VkDescriptorType type, VkDescriptorSet dstSet, VkDescriptorImageInfo *imageInfo,
+                         uint32_t binding) {
+        VkWriteDescriptorSet write = {};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.pNext = nullptr;
+
+        write.dstBinding = binding;
+        write.dstSet = dstSet;
+        write.descriptorCount = 1;
+        write.descriptorType = type;
+        write.pImageInfo = imageInfo;
 
         return write;
     }

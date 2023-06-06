@@ -22,18 +22,22 @@ if(GIT_FOUND)
             lib/vk-bootstrap;
             lib/vma;
             lib/glm;
-            lib/tinyobjloader)
+            lib/tinyobjloader
+            lib/stb)
     set(REPOSITORIES https://github.com/KhronosGroup/Vulkan-Headers.git;
-            https://github.com/glfw/glfw.git;https://github.com/charles-lunarg/vk-bootstrap;
+            https://github.com/glfw/glfw.git;
+            https://github.com/charles-lunarg/vk-bootstrap;
             https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git;
             https://github.com/g-truc/glm.git;
-            https://github.com/tinyobjloader/tinyobjloader.git)
+            https://github.com/tinyobjloader/tinyobjloader.git
+            https://github.com/nothings/stb.git)
     set(RELEASES main;
             3.2.1;
             master;
             master;
             master;
-            release;)
+            release;
+            master;)
 
     foreach(UPD_SUB IN LISTS SUBMODULES)
         execute_process(COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive --remote -- ${UPD_SUB} WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} RESULT_VARIABLE GIT_SUBMOD_RESULT)
@@ -73,6 +77,7 @@ include_directories(lib/vma/include)
 include_directories(lib/glm)
 add_subdirectory(lib/tinyobjloader)
 include_directories(lib/tinyobjloader)
+include_directories(lib/stb)
 
 find_package(Vulkan REQUIRED)
 
